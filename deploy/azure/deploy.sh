@@ -137,7 +137,7 @@ deploy() {
 
   say "Container Apps environment $ENV_NAME"
   az containerapp env show -g "$RG" -n "$ENV_NAME" -o none 2>/dev/null ||
-    az containerapp env create -g "$RG" -n "$ENV_NAME" -l "$LOCATION" -o none
+    az containerapp env create -g "$RG" -n "$ENV_NAME" -l "$LOCATION" --environment-mode ConsumptionOnly -o none
 
   local secrets=(
     "mongodb-uri=$MONGODB_URI"
