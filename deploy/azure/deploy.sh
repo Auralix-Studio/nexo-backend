@@ -60,6 +60,35 @@ load_env_file() {
   [[ ${#ADMIN_API_KEY} -ge 32 ]] || fail "ADMIN_API_KEY must have at least 32 characters."
 }
 
+# Azure for Students blocks ACR Tasks, so the image is built by GitHub Actions
+# (.github/workflows/build-image.yml) from the pushed commit. Prints the tag.
+build_on_github() {
+  command -v gh >/dev/null || fail "GitHub CLI (gh) is not installed."
+  git diff --quiet HEAD -- || fail "Commit your changes first: the image is built from GitHub."
+  local branch sha tag run_id
+  branch="$(git rev-parse --abbrev-ref HEAD)"
+  sha="$(git rev-parse HEAD)"
+  tag="$(git rev-parse --short=7 HEAD)"
+
+  say "Registry credentials for GitHub Actions" >&2
+  az acr update -n "$ACR" --admin-enabled true -o none
+  gh variable set ACR_LOGIN_SERVER --body "$REGISTRY" >/dev/null
+  gh secret set ACR_USERNAME --body "$(az acr credential show -n "$ACR" --query username -o tsv)" >/dev/null
+  gh secret set ACR_PASSWORD --body "$(az acr credential show -n "$ACR" --query 'passwords[0].value' -o tsv)" >/dev/null
+
+  say "Pushing $branch and waiting for the image build" >&2
+  git push -q origin "$branch" >&2
+  for _ in $(seq 1 30); do
+    run_id="$(gh run list --workflow build-image.yml --commit "$sha" --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null)"
+    [[ -n "$run_id" ]] && break
+    sleep 5
+  done
+  [[ -n "$run_id" ]] || gh workflow run build-image.yml --ref "$branch" >&2
+  [[ -n "$run_id" ]] || { sleep 10; run_id="$(gh run list --workflow build-image.yml --branch "$branch" --limit 1 --json databaseId -q '.[0].databaseId')"; }
+  gh run watch "$run_id" --exit-status >&2 || fail "Image build failed: gh run view $run_id --log-failed"
+  echo "$tag"
+}
+
 deploy() {
   load_env_file
 
@@ -74,11 +103,14 @@ deploy() {
     az acr create -g "$RG" -n "$ACR" -l "$ACR_LOCATION" --sku Basic --admin-enabled false -o none
 
   local tag
-  tag="$(git rev-parse --short HEAD)"
-  git diff --quiet HEAD -- || tag="$tag-dirty-$(date +%Y%m%d%H%M%S)"
-
-  say "Building $REGISTRY/$IMAGE:$tag in Azure"
-  az acr build -r "$ACR" -t "$IMAGE:$tag" -t "$IMAGE:latest" .
+  if [[ "${BUILD:-github}" == "acr" ]]; then
+    tag="$(git rev-parse --short HEAD)"
+    git diff --quiet HEAD -- || tag="$tag-dirty-$(date +%Y%m%d%H%M%S)"
+    say "Building $REGISTRY/$IMAGE:$tag in Azure"
+    az acr build -r "$ACR" -t "$IMAGE:$tag" -t "$IMAGE:latest" .
+  else
+    tag="$(build_on_github)"
+  fi
 
   say "Container Apps environment $ENV_NAME"
   az containerapp env show -g "$RG" -n "$ENV_NAME" -o none 2>/dev/null ||
