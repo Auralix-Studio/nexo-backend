@@ -17,9 +17,9 @@ defmodule Mix.Tasks.Nexo.Setup do
   def run(_args) do
     Application.ensure_all_started(:nexo)
 
-    case Nexo.Db.ensure_indexes() do
+    case Nexo.Infra.Db.ensure_indexes() do
       :ok ->
-        Mix.shell().info("Colecciones e índices listos en #{Nexo.Db.database_name()}.")
+        Mix.shell().info("Colecciones e índices listos en #{Nexo.Infra.Db.database_name()}.")
 
       :error ->
         Mix.raise("No se pudieron crear los índices. Revisa MONGODB_URI y el acceso al cluster.")

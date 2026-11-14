@@ -17,17 +17,46 @@ import Config
 # Alternatively, you can use `mix phx.gen.release` to generate a `bin/server`
 # script that automatically sets the env var above.
 if System.get_env("PHX_SERVER") do
-  config :nexo, NexoWeb.Endpoint, server: true
+  config :nexo, Nexo.Web.Endpoint, server: true
 end
 
-config :nexo, NexoWeb.Endpoint, http: [port: String.to_integer(System.get_env("PORT", "4000"))]
+config :nexo, Nexo.Web.Endpoint, http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
 if config_env() == :prod do
+  # Only the official app may call the API. `enforce` unless told otherwise;
+  # without a project number every attested request is refused.
+  config :nexo, :app_check,
+    mode:
+      (case System.get_env("APP_CHECK_MODE", "enforce") do
+         "monitor" -> :monitor
+         "off" -> :off
+         _ -> :enforce
+       end),
+    project_number: System.get_env("FIREBASE_PROJECT_NUMBER"),
+    app_ids:
+      "FIREBASE_APP_IDS"
+      |> System.get_env("")
+      |> String.split(",", trim: true)
+      |> Enum.map(&String.trim/1)
+
   # The secret key base is used to sign/encrypt cookies and other secrets.
   # A default value is used in config/dev.exs and config/test.exs but you
   # want to use a different value for prod and you most likely don't want
   # to check this value into version control, so we use an environment
   # variable instead.
+  csv = fn name ->
+    name |> System.get_env("") |> String.split(",", trim: true) |> Enum.map(&String.trim/1)
+  end
+
+  # Only these hosts are answered (empty: any). E.g. `api.nexo.aurx.pro`.
+  config :nexo, :allowed_hosts, Enum.map(csv.("ALLOWED_HOSTS"), &String.downcase/1)
+
+  # Proxies allowed to report the client IP: the platform's ingress.
+  case csv.("TRUSTED_PROXIES") do
+    [] -> :ok
+    proxies -> config :nexo, :trusted_proxies, proxies
+  end
+
   secret_key_base =
     System.get_env("SECRET_KEY_BASE") ||
       raise """
@@ -39,7 +68,7 @@ if config_env() == :prod do
 
   config :nexo, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
-  config :nexo, NexoWeb.Endpoint,
+  config :nexo, Nexo.Web.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
     http: [
       # Enable IPv6 and bind on all interfaces.
@@ -55,7 +84,7 @@ if config_env() == :prod do
   # To get SSL working, you will need to add the `https` key
   # to your endpoint configuration:
   #
-  #     config :nexo, NexoWeb.Endpoint,
+  #     config :nexo, Nexo.Web.Endpoint,
   #       https: [
   #         ...,
   #         port: 443,
@@ -77,7 +106,7 @@ if config_env() == :prod do
   # We also recommend setting `force_ssl` in your config/prod.exs,
   # ensuring no data is ever sent via http, always redirecting to https:
   #
-  #     config :nexo, NexoWeb.Endpoint,
+  #     config :nexo, Nexo.Web.Endpoint,
   #       force_ssl: [hsts: true]
   #
   # Check `Plug.SSL` for all available options in `force_ssl`.

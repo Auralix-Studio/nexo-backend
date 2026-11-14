@@ -8,19 +8,23 @@ defmodule Nexo.Application do
   @impl true
   def start(_type, _args) do
     children = [
-      NexoWeb.Telemetry,
+      Nexo.Web.Telemetry,
       {DNSCluster, query: Application.get_env(:nexo, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Nexo.PubSub},
-      {Mongo, Nexo.Db.connection_opts()},
+      {Mongo, Nexo.Infra.Db.connection_opts()},
+      Nexo.Infra.Cache,
+      Nexo.Infra.RateLimiter,
       # Start to serve requests, typically the last entry
-      NexoWeb.Endpoint
+      Nexo.Web.Endpoint
     ]
 
     # See https://elixir.hexdocs.pm/Supervisor.html
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: Nexo.Supervisor]
     result = Supervisor.start_link(children, opts)
-    Nexo.Db.ensure_indexes_async()
+    # Fails the boot on colliding API routes instead of serving a wrong table.
+    Nexo.Web.Api.Registry.reload!()
+    Nexo.Infra.Db.ensure_indexes_async()
     result
   end
 
@@ -28,7 +32,7 @@ defmodule Nexo.Application do
   # whenever the application is updated.
   @impl true
   def config_change(changed, _new, removed) do
-    NexoWeb.Endpoint.config_change(changed, removed)
+    Nexo.Web.Endpoint.config_change(changed, removed)
     :ok
   end
 end

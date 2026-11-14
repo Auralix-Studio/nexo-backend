@@ -77,6 +77,87 @@ defmodule Nexo.Sigma.Client do
     end
   end
 
+  @impl true
+  def fetch(token, path) do
+    case Req.get(req(), url: path, auth: {:bearer, token}) do
+      {:ok, %Req.Response{status: status}} when status in [401, 403] ->
+        {:error, :session_expired}
+
+      # SIGMA answers a dead session with its web page and status 200.
+      {:ok, %Req.Response{status: 200, body: body}} when is_binary(body) ->
+        if body |> String.trim_leading() |> String.starts_with?("<"),
+          do: {:error, :session_expired},
+          else: {:error, :unavailable}
+
+      {:ok, %Req.Response{status: 200, body: %{} = body}} ->
+        {:ok, body["data"]}
+
+      _other ->
+        {:error, :unavailable}
+    end
+  end
+
+  @impl true
+  def call(token, method, path, query, body) do
+    opts = [method: method, url: path, params: Map.to_list(query), auth: {:bearer, token}]
+    opts = if body, do: Keyword.put(opts, :json, body), else: opts
+
+    case Req.request(req(), opts) do
+      {:ok, %Req.Response{status: status}} when status in [401, 403] ->
+        {:error, :session_expired}
+
+      {:ok, %Req.Response{status: 200, body: body}} when is_binary(body) ->
+        if body |> String.trim_leading() |> String.starts_with?("<"),
+          do: {:error, :session_expired},
+          else: {:error, :unavailable}
+
+      # SIGMA reports a rejected write as `success: false` (sometimes with 400).
+      {:ok, %Req.Response{status: status, body: %{} = body}} when status in [200, 201, 400] ->
+        {:ok, %{success: body["success"] != false, data: body["data"], message: body["mensaje"]}}
+
+      _other ->
+        {:error, :unavailable}
+    end
+  end
+
+  @impl true
+  def download(token, path, query) do
+    opts = [
+      method: :get,
+      url: path,
+      params: Map.to_list(query),
+      auth: {:bearer, token},
+      decode_body: false
+    ]
+
+    case Req.request(req(), opts) do
+      {:ok, %Req.Response{status: status}} when status in [401, 403] ->
+        {:error, :session_expired}
+
+      {:ok, %Req.Response{status: 200, body: body} = res} when is_binary(body) and body != "" ->
+        type = res |> Req.Response.get_header("content-type") |> List.first()
+
+        cond do
+          # A dead session is SIGMA's web page; an error is its JSON envelope.
+          body |> String.trim_leading() |> String.starts_with?("<") -> {:error, :session_expired}
+          type && type =~ "json" -> {:error, :unavailable}
+          true -> {:ok, %{body: body, content_type: type, filename: filename(res)}}
+        end
+
+      _other ->
+        {:error, :unavailable}
+    end
+  end
+
+  defp filename(res) do
+    with [disposition | _] <- Req.Response.get_header(res, "content-disposition"),
+         [_, name] <- Regex.run(~r/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i, disposition) do
+      URI.decode(name)
+    else
+      _ -> nil
+    end
+  end
+
   defp get(token, path, params \\ []) do
     case Req.get(req(), url: path, params: params, auth: {:bearer, token}) do
       {:ok, %Req.Response{status: 200, body: %{"data" => data}}} when is_list(data) ->

@@ -27,20 +27,43 @@ config :nexo,
   generators: [timestamp_type: :utc_datetime]
 
 # Configure the endpoint
-config :nexo, NexoWeb.Endpoint,
+config :nexo, Nexo.Web.Endpoint,
   url: [host: "localhost"],
   adapter: Bandit.PhoenixAdapter,
   render_errors: [
-    formats: [json: NexoWeb.ErrorJSON],
+    formats: [json: Nexo.Web.ErrorJSON],
     layout: false
   ],
   pubsub_server: Nexo.PubSub,
   live_view: [signing_salt: "WvrRrwF6"]
 
+# Proof that requests come from the official app (see `Nexo.Security.AppCheck`).
+# Production overrides these from the environment in `runtime.exs`.
+config :nexo, :app_check,
+  mode: :enforce,
+  project_number: nil,
+  app_ids: [],
+  jwks_url: "https://firebaseappcheck.googleapis.com/v1/jwks"
+
+config :nexo, :rate_limits,
+  ip_per_minute: 300,
+  subject_per_minute: 120
+
+# Peers allowed to report the client IP (the Cloudflare tunnel runs on the
+# same host).
+config :nexo, :trusted_proxies, ["127.0.0.1", "::1"]
+
+# Where the student directory comes from (see `Nexo.Academic.Directory.Source`).
+# Sample students until the university's endpoint exists.
+config :nexo, :directory_source, Nexo.Academic.Directory.SampleSource
+
+# Hosts the API answers; empty means any (see `Nexo.Web.HostGuard`).
+config :nexo, :allowed_hosts, []
+
 # Configure Elixir's Logger
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",
-  metadata: [:request_id]
+  metadata: [:request_id, :api_route]
 
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason

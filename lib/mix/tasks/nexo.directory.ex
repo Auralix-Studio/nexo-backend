@@ -9,15 +9,19 @@ defmodule Mix.Tasks.Nexo.Directory do
       mix nexo.directory 120 --seed 7 # otra semilla, otro directorio
 
   Los estudiantes son inventados pero tienen la forma exacta de SIGMA (ver
-  `Nexo.Directory.Prototype`). La tarea **reemplaza** el contenido anterior:
+  `Nexo.Academic.Directory.Prototype`). La tarea **reemplaza** el contenido anterior:
   el directorio es un espejo, no un histórico.
 
   Cuando haya permiso para leer la Intranet, esta tarea deja de usarse.
   """
   use Mix.Task
 
-  alias Nexo.{Db, Directory, DirectoryAccess}
-  alias Nexo.Directory.Prototype
+  alias Nexo.Academic.Directory
+
+  alias Nexo.Access.DirectoryAccess
+
+  alias Nexo.Infra.Db
+  alias Nexo.Academic.Directory.Prototype
 
   @impl true
   def run(args) do

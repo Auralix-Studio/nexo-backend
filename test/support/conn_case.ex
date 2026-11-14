@@ -1,4 +1,4 @@
-defmodule NexoWeb.ConnCase do
+defmodule Nexo.Web.ConnCase do
   @moduledoc """
   This module defines the test case to be used by
   tests that require setting up a connection.
@@ -11,7 +11,7 @@ defmodule NexoWeb.ConnCase do
   we enable the SQL sandbox, so changes done to the database
   are reverted at the end of every test. If you are using
   PostgreSQL, you can even run database tests asynchronously
-  by setting `use NexoWeb.ConnCase, async: true`, although
+  by setting `use Nexo.Web.ConnCase, async: true`, although
   this option is not recommended for other databases.
   """
 
@@ -20,14 +20,14 @@ defmodule NexoWeb.ConnCase do
   using do
     quote do
       # The default endpoint for testing
-      @endpoint NexoWeb.Endpoint
+      @endpoint Nexo.Web.Endpoint
 
-      use NexoWeb, :verified_routes
+      use Nexo.Web, :verified_routes
 
       # Import conveniences for testing with connections
       import Plug.Conn
       import Phoenix.ConnTest
-      import NexoWeb.ConnCase
+      import Nexo.Web.ConnCase
     end
   end
 

@@ -52,3 +52,9 @@ erl_crash.dump
 *.pem
 *.key
 *.crt
+
+# Deployment scripts and their secrets never go into the build context
+# (`az acr build` uploads the context to Azure).
+/deploy/
+**/.env
+**/.env.*

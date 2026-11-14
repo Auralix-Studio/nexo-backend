@@ -6,7 +6,7 @@ import Config
 # The watchers configuration can be used to run external
 # watchers to your application. For example, we can use it
 # to bundle .js and .css sources.
-config :nexo, NexoWeb.Endpoint,
+config :nexo, Nexo.Web.Endpoint,
   # Binding to loopback ipv4 address prevents access from other machines.
   # Change to `ip: {0, 0, 0, 0}` to allow access from other machines.
   http: [ip: {127, 0, 0, 1}],
@@ -65,3 +65,18 @@ config :nexo,
   admin_api_key: System.get_env("ADMIN_API_KEY", "dev-admin-key"),
   authorized_teachers: System.get_env("AUTHORIZED_TEACHERS", ""),
   system_admins: System.get_env("SYSTEM_ADMINS", "")
+
+# Local development has no App Check token unless a debug token is set up.
+config :nexo, :app_check,
+  mode:
+    (case System.get_env("APP_CHECK_MODE", "off") do
+       "enforce" -> :enforce
+       "monitor" -> :monitor
+       _ -> :off
+     end),
+  project_number: System.get_env("FIREBASE_PROJECT_NUMBER"),
+  app_ids:
+    "FIREBASE_APP_IDS"
+    |> System.get_env("")
+    |> String.split(",", trim: true)
+    |> Enum.map(&String.trim/1)

@@ -17,7 +17,11 @@ defmodule Mix.Tasks.Nexo.Seed do
   """
   use Mix.Task
 
-  alias Nexo.{Consents, Db, Students}
+  alias Nexo.Access.Consents
+
+  alias Nexo.Infra.Db
+
+  alias Nexo.People.Students
 
   @default "priv/seed/replicas.json"
 

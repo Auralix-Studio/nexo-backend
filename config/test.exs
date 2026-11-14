@@ -2,7 +2,7 @@ import Config
 
 # We don't run a server during test. If one is required,
 # you can enable the server option below.
-config :nexo, NexoWeb.Endpoint,
+config :nexo, Nexo.Web.Endpoint,
   http: [ip: {127, 0, 0, 1}, port: 4002],
   secret_key_base: "HYbB8fm46ZQulVfRu7ma5cA38RIRbPdDoNKawzJP6IFYA2bJdxDOnimZ/1EIqAVC",
   server: false
@@ -32,6 +32,19 @@ config :nexo,
   # de la suite.
   mongodb_pool_size: 2,
   sigma_client: Nexo.SigmaMock,
+  intranet_client: Nexo.IntranetMock,
+  languages_client: Nexo.LanguagesMock,
   admin_api_key: "test-admin-key",
   authorized_teachers: "PRE-001",
   system_admins: "62017241"
+
+# Attestation is off by default in tests; the App Check tests switch it on
+# with their own signing key.
+config :nexo, :app_check,
+  mode: :off,
+  project_number: "123456789",
+  app_ids: ["1:123456789:android:nexo"]
+
+config :nexo, :rate_limits,
+  ip_per_minute: 100_000,
+  subject_per_minute: 100_000
