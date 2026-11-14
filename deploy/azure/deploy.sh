@@ -131,6 +131,7 @@ deploy() {
       az acr build -r "$ACR" -t "$IMAGE:$tag" -t "$IMAGE:latest" .
       ;;
     github) tag="$(build_on_github)" ;;
+    skip) tag="${TAG:?Set TAG to an image tag already in the registry}" ;;
     *) tag="$(build_local)" ;;
   esac
 
@@ -177,7 +178,9 @@ deploy() {
     az containerapp create -g "$RG" -n "$APP" \
       --environment "$ENV_NAME" \
       --image "$REGISTRY/$IMAGE:$tag" \
-      --registry-server "$REGISTRY" --registry-identity system \
+      --registry-server "$REGISTRY" \
+      --registry-username "$(az acr credential show -n "$ACR" --query username -o tsv)" \
+      --registry-password "$(az acr credential show -n "$ACR" --query 'passwords[0].value' -o tsv)" \
       --ingress external --target-port 4000 --transport auto \
       --cpu 0.5 --memory 1.0Gi \
       --min-replicas "$MIN_REPLICAS" --max-replicas "$MAX_REPLICAS" \

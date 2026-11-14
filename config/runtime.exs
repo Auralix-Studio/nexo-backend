@@ -75,7 +75,13 @@ if config_env() == :prod do
       # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.
       # See the documentation on https://bandit.hexdocs.pm/Bandit.html#t:options/0
       # for details about using IPv6 vs IPv4 and loopback vs public addresses.
-      ip: {0, 0, 0, 0, 0, 0, 0, 0}
+      # Azure Container Apps has no IPv6 inside the container (:eafnosupport),
+      # so listen on every IPv4 address unless BIND_IPV6=true.
+      ip:
+        if(System.get_env("BIND_IPV6") == "true",
+          do: {0, 0, 0, 0, 0, 0, 0, 0},
+          else: {0, 0, 0, 0}
+        )
     ],
     secret_key_base: secret_key_base
 
