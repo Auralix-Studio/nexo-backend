@@ -245,6 +245,13 @@ defmodule Nexo.SigmaTeacherMock do
     ok([row, row])
   end
 
+  # The current password, base64, must be "ok".
+  def call(_token, :post, "/Login/ChangePassword", _query, %{"claveActual" => current}) do
+    if Base.decode64!(current) == "ok",
+      do: {:ok, %{success: true, data: nil, message: nil}},
+      else: {:ok, %{success: false, data: nil, message: "La contraseña actual no es correcta."}}
+  end
+
   def call("tok-D001", :post, path, query, body) do
     send(self(), {:sigma_post, path, query, body})
 

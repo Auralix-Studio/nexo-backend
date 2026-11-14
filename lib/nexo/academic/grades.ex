@@ -29,6 +29,7 @@ defmodule Nexo.Academic.Grades do
 
   Course ids are the course code: the university's enrollment ids stay here.
   """
+  require Logger
   alias Nexo.Academic.{Profile, Terms}
   alias Nexo.Sigma
   alias Nexo.Upstream.{Intranet, Normalize, Sessions}
@@ -588,8 +589,8 @@ defmodule Nexo.Academic.Grades do
          },
          terms:
            case averages do
-             {:ok, list} -> list
-             _ -> []
+             {:ok, [_ | _] = list} -> list
+             _ -> computed_term_averages(subject)
            end,
          current_term: current_term(current)
        },
@@ -616,9 +617,62 @@ defmodule Nexo.Academic.Grades do
 
   defp current_term(_), do: nil
 
+  # SIGMA's per-term averages come back empty for some accounts; then each
+  # past term's own grades give its credit-weighted average. Cached for 30
+  # minutes per student: closed terms do not change.
+  defp computed_term_averages(%{type: type, id: id} = subject) do
+    result =
+      Nexo.Infra.Cache.fetch({:term_averages, type, id}, 30 * 60_000, fn ->
+        case Terms.list(subject) do
+          {:ok, terms, _} ->
+            terms
+            |> Enum.reject(& &1.active)
+            |> Enum.take(14)
+            |> Task.async_stream(
+              fn t ->
+                case term(subject, t.id) do
+                  {:ok, %{average: %{value: v}}, _} when is_number(v) -> %{term: t.id, average: v}
+                  _ -> nil
+                end
+              end,
+              max_concurrency: 3,
+              timeout: 40_000,
+              on_timeout: :kill_task
+            )
+            |> Enum.flat_map(fn
+              {:ok, %{} = row} -> [row]
+              _ -> []
+            end)
+            |> case do
+              [] -> :empty
+              rows -> {:ok, rows}
+            end
+
+          _ ->
+            :empty
+        end
+      end)
+
+    case result do
+      {:ok, rows} -> rows
+      _ -> []
+    end
+  end
+
   defp term_averages(subject) do
     Sessions.with_session(subject, :sigma, fn token ->
       with {:ok, data} <- Sigma.fetch(token, "/Estudiante/ListarPromediosResumen") do
+        if List.wrap(data) != [] do
+          sample = data |> List.wrap() |> List.first()
+
+          keys =
+            if is_map(sample), do: Map.keys(sample), else: inspect(sample) |> String.slice(0, 80)
+
+          Logger.info(
+            "ListarPromediosResumen rows=#{length(List.wrap(data))} keys=#{inspect(keys)}"
+          )
+        end
+
         rows =
           for row <- List.wrap(data),
               is_map(row),

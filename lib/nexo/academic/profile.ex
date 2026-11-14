@@ -48,7 +48,52 @@ defmodule Nexo.Academic.Profile do
         intranet: worst([datos, certificate]) |> fallback(term_sources[:intranet])
       }
 
-      {:ok, build(student, ok(info), ok(summary), ok(datos), ok(certificate), active), sources}
+      profile =
+        student
+        |> build(ok(info), ok(summary), ok(datos), ok(certificate), active)
+        |> with_curriculum_totals(subject, student)
+
+      {:ok, profile, sources}
+    end
+  end
+
+  # SIGMA's summary answers 0 approved credits and a 0 average for some
+  # students (seen on real accounts). The curriculum has every completed
+  # course with its grade and credits, so the totals come from there.
+  defp with_curriculum_totals(
+         %{credits: %{approved: a}, average: %{cumulative: c}} = profile,
+         _,
+         _
+       )
+       when is_integer(a) and is_number(c),
+       do: profile
+
+  defp with_curriculum_totals(profile, subject, student) do
+    case Nexo.Academic.Grades.curriculum(subject, student) do
+      {:ok, %{courses: courses} = curriculum, _} ->
+        passed =
+          Enum.filter(
+            courses,
+            &(&1.status == "completed" and is_number(&1.grade) and is_number(&1.credits) and
+                &1.grade >= Nexo.Academic.Grades.passing())
+          )
+
+        credits = passed |> Enum.map(& &1.credits) |> Enum.sum()
+
+        average =
+          if credits > 0,
+            do: Float.round(Enum.reduce(passed, 0, &(&1.grade * &1.credits + &2)) / credits, 2)
+
+        profile
+        |> update_in([:credits, :approved], &(&1 || if(credits > 0, do: trunc(credits))))
+        |> update_in(
+          [:credits, :required],
+          &(&1 || int_or_nil(curriculum.progress.credits_total))
+        )
+        |> update_in([:average, :cumulative], &(&1 || average))
+
+      _ ->
+        profile
     end
   end
 
@@ -121,8 +166,8 @@ defmodule Nexo.Academic.Profile do
       Normalize.text(info["est_Id"]) || Normalize.text(at.(header, 0)) ||
         student["code"]
 
-    first = Normalize.text(student["first_name"])
-    last = Normalize.text(student["last_name"])
+    first = Normalize.title(student["first_name"])
+    last = Normalize.title(student["last_name"])
 
     full =
       [first, last] |> Enum.reject(&is_nil/1) |> Enum.join(" ") |> Normalize.text() ||
