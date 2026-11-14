@@ -60,7 +60,27 @@ load_env_file() {
   [[ ${#ADMIN_API_KEY} -ge 32 ]] || fail "ADMIN_API_KEY must have at least 32 characters."
 }
 
-# Azure for Students blocks ACR Tasks, so the image is built by GitHub Actions
+# Default: no Docker and no cloud build. The release is built here and pushed
+# as a layer on top of the official Erlang image (deploy/azure/push_image.py).
+# Prints the tag.
+build_local() {
+  local tag user password
+  tag="$(git rev-parse --short=7 HEAD)"
+  git diff --quiet HEAD -- || tag="$tag-dirty-$(date +%Y%m%d%H%M%S)"
+
+  say "Building the release" >&2
+  MIX_ENV=prod mix deps.get --only prod >&2
+  MIX_ENV=prod RELEASE_INCLUDE_ERTS=false mix release --overwrite >&2
+
+  say "Pushing $REGISTRY/$IMAGE:$tag" >&2
+  az acr update -n "$ACR" --admin-enabled true -o none
+  user="$(az acr credential show -n "$ACR" --query username -o tsv)"
+  password="$(az acr credential show -n "$ACR" --query 'passwords[0].value' -o tsv)"
+  python deploy/azure/push_image.py "$REGISTRY" "$user" "$password" "$tag" latest >&2
+  echo "$tag"
+}
+
+# Alternative: GitHub Actions (BUILD=github), built by
 # (.github/workflows/build-image.yml) from the pushed commit. Prints the tag.
 build_on_github() {
   command -v gh >/dev/null || fail "GitHub CLI (gh) is not installed."
@@ -103,14 +123,16 @@ deploy() {
     az acr create -g "$RG" -n "$ACR" -l "$ACR_LOCATION" --sku Basic --admin-enabled false -o none
 
   local tag
-  if [[ "${BUILD:-github}" == "acr" ]]; then
-    tag="$(git rev-parse --short HEAD)"
-    git diff --quiet HEAD -- || tag="$tag-dirty-$(date +%Y%m%d%H%M%S)"
-    say "Building $REGISTRY/$IMAGE:$tag in Azure"
-    az acr build -r "$ACR" -t "$IMAGE:$tag" -t "$IMAGE:latest" .
-  else
-    tag="$(build_on_github)"
-  fi
+  case "${BUILD:-local}" in
+    acr)
+      tag="$(git rev-parse --short HEAD)"
+      git diff --quiet HEAD -- || tag="$tag-dirty-$(date +%Y%m%d%H%M%S)"
+      say "Building $REGISTRY/$IMAGE:$tag in Azure"
+      az acr build -r "$ACR" -t "$IMAGE:$tag" -t "$IMAGE:latest" .
+      ;;
+    github) tag="$(build_on_github)" ;;
+    *) tag="$(build_local)" ;;
+  esac
 
   say "Container Apps environment $ENV_NAME"
   az containerapp env show -g "$RG" -n "$ENV_NAME" -o none 2>/dev/null ||

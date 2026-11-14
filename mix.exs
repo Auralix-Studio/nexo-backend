@@ -10,6 +10,11 @@ defmodule Nexo.MixProject do
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
       deps: deps(),
+      releases: [
+        # RELEASE_INCLUDE_ERTS=false builds a release that runs on the
+        # image's Erlang (used by deploy/azure/push_image.py on Windows).
+        nexo: [include_erts: System.get_env("RELEASE_INCLUDE_ERTS", "true") == "true"]
+      ],
       listeners: [Phoenix.CodeReloader]
     ]
   end
