@@ -1,30 +1,22 @@
 defmodule Nexo.Web.ConnCase do
   @moduledoc """
-  This module defines the test case to be used by
-  tests that require setting up a connection.
-
-  Such tests rely on `Phoenix.ConnTest` and also
-  import other functionality to make it easier
-  to build common data structures and query the data layer.
-
-  Finally, if the test case interacts with the database,
-  we enable the SQL sandbox, so changes done to the database
-  are reverted at the end of every test. If you are using
-  PostgreSQL, you can even run database tests asynchronously
-  by setting `use Nexo.Web.ConnCase, async: true`, although
-  this option is not recommended for other databases.
+  Test case for requests through the endpoint, with helpers to log in and
+  to wipe collections of the shared test database.
   """
 
   use ExUnit.CaseTemplate
 
+  import Phoenix.ConnTest
+  import Plug.Conn
+
+  @endpoint Nexo.Web.Endpoint
+
   using do
     quote do
-      # The default endpoint for testing
       @endpoint Nexo.Web.Endpoint
 
       use Nexo.Web, :verified_routes
 
-      # Import conveniences for testing with connections
       import Plug.Conn
       import Phoenix.ConnTest
       import Nexo.Web.ConnCase
@@ -32,6 +24,27 @@ defmodule Nexo.Web.ConnCase do
   end
 
   setup _tags do
-    {:ok, conn: Phoenix.ConnTest.build_conn()}
+    {:ok, conn: build_conn()}
+  end
+
+  @doc """
+  Logs in through `POST /auth/login` (mocked upstreams, `"D001"` is the
+  teacher) and sets the bearer token.
+  """
+  def logged_in(conn, user \\ "D001", password \\ "ok") do
+    body =
+      conn |> post("/auth/login", %{"user" => user, "password" => password}) |> json_response(200)
+
+    bearer(conn, body["data"]["access_token"])
+  end
+
+  @doc "A conn carrying `token`, or a fresh access token for `type` and `id`."
+  def bearer(conn, token), do: put_req_header(conn, "authorization", "Bearer " <> token)
+  def bearer(conn, type, id), do: bearer(conn, Nexo.Security.Auth.sign_access_token(type, id))
+
+  @doc "Empties the given collections."
+  def wipe(collections) do
+    for c <- collections, do: Mongo.delete_many(Nexo.Infra.Db.conn(), c, %{})
+    :ok
   end
 end

@@ -29,9 +29,8 @@ defmodule Nexo.Academic.Grades do
 
   Course ids are the course code: the university's enrollment ids stay here.
   """
-  require Logger
+  import Nexo.Upstream.Normalize, only: [tidy: 1]
   alias Nexo.Academic.{Profile, Terms}
-  alias Nexo.Sigma
   alias Nexo.Upstream.{Intranet, Normalize, Sessions}
 
   @passing 10.5
@@ -383,32 +382,32 @@ defmodule Nexo.Academic.Grades do
 
   defp legacy(subject, term) do
     intranet =
-      Sessions.with_session(subject, :intranet, fn cookies ->
-        with {:ok, rows, cookies} <-
-               Intranet.post(cookies, "consultarconstanciaNotasDetallado", form(term), @referer) do
-          maps =
-            for row <- rows,
-                is_list(row),
-                length(row) >= 24,
-                do: @legacy_keys |> Enum.zip(row) |> Map.new()
-
-          {:ok, maps, cookies}
-        end
-      end)
+      with {:ok, rows} <-
+             Sessions.intranet_post(
+               subject,
+               "consultarconstanciaNotasDetallado",
+               form(term),
+               @referer
+             ) do
+        {:ok,
+         for(
+           row <- rows,
+           is_list(row),
+           length(row) >= 24,
+           do: Map.new(Enum.zip(@legacy_keys, row))
+         )}
+      end
 
     case intranet do
       {:ok, [_ | _] = maps} ->
         {:ok, legacy_courses(maps), "intranet"}
 
       _ ->
-        sigma =
-          Sessions.with_session(subject, :sigma, fn token ->
-            path = "/Intranet/ListarNotasEstudianteIntranet/#{term.year}/#{term.number}"
+        path = "/Intranet/ListarNotasEstudianteIntranet/#{term.year}/#{term.number}"
 
-            with {:ok, data} <- Sigma.fetch(token, path) do
-              {:ok, Enum.filter(List.wrap(data), &is_map/1), token}
-            end
-          end)
+        sigma =
+          with {:ok, data} <- Sessions.sigma_fetch(subject, path),
+               do: {:ok, Enum.filter(List.wrap(data), &is_map/1)}
 
         case {intranet, sigma} do
           {_, {:ok, [_ | _] = maps}} -> {:ok, legacy_courses(maps), "sigma"}
@@ -546,15 +545,6 @@ defmodule Nexo.Academic.Grades do
     }
   end
 
-  @doc "Two decimals; whole numbers as integers (`3`, not `3.0`)."
-  def tidy(nil), do: nil
-  def tidy(n) when is_integer(n), do: n
-
-  def tidy(n) when is_float(n) do
-    r = Float.round(n, 2)
-    if r == trunc(r), do: trunc(r), else: r
-  end
-
   # --- Summary --------------------------------------------------------------------------
 
   @doc "`{:ok, summary, meta}` or `{:error, :reauth_required}`."
@@ -596,8 +586,8 @@ defmodule Nexo.Academic.Grades do
        },
        %{
          sources: %{
-           sigma: status(averages),
-           intranet: status(current)
+           sigma: Sessions.status(averages),
+           intranet: Sessions.status(current)
          }
        }}
     end
@@ -660,56 +650,33 @@ defmodule Nexo.Academic.Grades do
   end
 
   defp term_averages(subject) do
-    Sessions.with_session(subject, :sigma, fn token ->
-      with {:ok, data} <- Sigma.fetch(token, "/Estudiante/ListarPromediosResumen") do
-        if List.wrap(data) != [] do
-          sample = data |> List.wrap() |> List.first()
+    with {:ok, data} <- Sessions.sigma_fetch(subject, "/Estudiante/ListarPromediosResumen") do
+      rows =
+        for row <- List.wrap(data),
+            is_map(row),
+            year = Normalize.int(row["anio"]),
+            number = Normalize.int(row["periodo"]),
+            is_integer(year) and is_integer(number),
+            average = Normalize.positive(row["promedio"]),
+            do: {{year, number}, %{term: "#{year}-#{number}", average: tidy(average)}}
 
-          keys =
-            if is_map(sample), do: Map.keys(sample), else: inspect(sample) |> String.slice(0, 80)
-
-          Logger.info(
-            "ListarPromediosResumen rows=#{length(List.wrap(data))} keys=#{inspect(keys)}"
-          )
-        end
-
-        rows =
-          for row <- List.wrap(data),
-              is_map(row),
-              year = Normalize.int(row["anio"]),
-              number = Normalize.int(row["periodo"]),
-              is_integer(year) and is_integer(number),
-              average = Normalize.positive(row["promedio"]),
-              do: {{year, number}, %{term: "#{year}-#{number}", average: tidy(average)}}
-
-        {:ok, rows |> Enum.sort_by(&elem(&1, 0), :desc) |> Enum.map(&elem(&1, 1)), token}
-      end
-    end)
+      {:ok, rows |> Enum.sort_by(&elem(&1, 0), :desc) |> Enum.map(&elem(&1, 1))}
+    end
   end
-
-  defp status({:ok, _}), do: "ok"
-  defp status({:ok, _, _}), do: "ok"
-  defp status({:error, :reauth_required}), do: "reauth_required"
-  defp status(_), do: "unavailable"
 
   # --- Curriculum -----------------------------------------------------------------------
 
   @doc "`{:ok, curriculum, meta}` or `{:error, :reauth_required | :unavailable}`."
   def curriculum(subject, student) do
-    result =
-      Sessions.with_session(subject, :intranet, fn cookies ->
-        with {:ok, rows, cookies} <-
-               Intranet.post(
-                 cookies,
-                 "consultarProgresoCurricular",
-                 %{"codest" => to_string(student["code"])},
-                 "repProgresoCurricularEst"
-               ) do
-          {:ok, rows, cookies}
-        end
-      end)
+    form = %{"codest" => to_string(student["code"])}
 
-    with {:ok, rows} <- result do
+    with {:ok, rows} <-
+           Sessions.intranet_post(
+             subject,
+             "consultarProgresoCurricular",
+             form,
+             "repProgresoCurricularEst"
+           ) do
       rows = for r <- rows, is_list(r), length(r) >= 13, do: r
       courses = rows |> Enum.map(&curriculum_course/1) |> Enum.reject(&is_nil/1)
       first = List.first(rows) || []

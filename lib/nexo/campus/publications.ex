@@ -5,20 +5,12 @@ defmodule Nexo.Campus.Publications do
   `"1080x1080"` dimension becomes `width`/`height`, and entries without an
   image or video URL are dropped.
   """
-  alias Nexo.Sigma
   alias Nexo.Upstream.{Normalize, Sessions}
 
   @doc "`{:ok, publications, meta}` or `{:error, :reauth_required | :unavailable}`."
   def list(subject) do
-    result =
-      Sessions.with_session(subject, :sigma, fn token ->
-        with {:ok, data} <- Sigma.fetch(token, "/Recursos/ListarPublicaciones") do
-          {:ok, List.wrap(data), token}
-        end
-      end)
-
-    with {:ok, rows} <- result do
-      items = for row <- rows, is_map(row), item = build(row), do: item
+    with {:ok, data} <- Sessions.sigma_fetch(subject, "/Recursos/ListarPublicaciones") do
+      items = for row <- List.wrap(data), is_map(row), item = build(row), do: item
       {:ok, items, %{source: "sigma"}}
     end
   end

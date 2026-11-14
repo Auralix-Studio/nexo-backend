@@ -12,7 +12,7 @@ defmodule Nexo.Web.GuardianTest do
 
   alias Nexo.Infra.Db
 
-  alias Nexo.People.Guardians
+  alias Nexo.People.{Guardians, Students}
 
   alias Nexo.Security.Audit
   alias Nexo.Academic.Directory.Prototype
@@ -21,17 +21,9 @@ defmodule Nexo.Web.GuardianTest do
   @dni "44556677"
 
   setup do
-    for collection <- [
-          "teachers",
-          "students",
-          "refresh_tokens",
-          "audit_log",
-          "directory_access",
-          "directory_students",
-          "guardians"
-        ] do
-      Mongo.delete_many(Db.conn(), collection, %{})
-    end
+    wipe(
+      ~w(teachers students refresh_tokens audit_log directory_access directory_students guardians)
+    )
 
     Db.ensure_indexes()
     :ok = Directory.replace_all(Prototype.generate(6, 7))
@@ -149,7 +141,9 @@ defmodule Nexo.Web.GuardianTest do
 
   describe "administración" do
     setup %{conn: conn} do
-      %{admin: put_req_header(conn, "authorization", "Bearer #{admin_token(conn)}")}
+      # The code is in SYSTEM_ADMINS (config/test.exs).
+      {:ok, admin} = Students.upsert_from_sigma(%{code: @admin, first_name: "A", last_name: "B"})
+      %{admin: bearer(conn, :student, Db.id_to_string(admin["_id"]))}
     end
 
     test "un administrador vincula un apoderado y recibe el PIN", %{
@@ -186,14 +180,5 @@ defmodule Nexo.Web.GuardianTest do
       assert res["pin"] == nil
       assert length(res["apoderado"]["estudiantes"]) == 2
     end
-  end
-
-  defp admin_token(conn) do
-    %{"access_token" => token} =
-      conn
-      |> post("/api/v1/auth/student/login", %{"usuario" => "ADMIN-SYS", "clave" => "ok"})
-      |> json_response(200)
-
-    token
   end
 end

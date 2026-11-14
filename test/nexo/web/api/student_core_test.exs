@@ -14,9 +14,7 @@ defmodule Nexo.Web.Api.StudentCoreTest do
   setup do
     RateLimiter.reset()
 
-    for c <- ~w(students teachers refresh_tokens upstream_sessions) do
-      Mongo.delete_many(Db.conn(), c, %{})
-    end
+    wipe(~w(students teachers refresh_tokens upstream_sessions))
 
     :ok
   end
@@ -24,7 +22,7 @@ defmodule Nexo.Web.Api.StudentCoreTest do
   defp login(conn, user, password \\ "ok"),
     do: post(conn, "/auth/login", %{"user" => user, "password" => password})
 
-  defp logged_in(conn, user \\ "E001") do
+  defp session(conn, user \\ "E001") do
     body = conn |> login(user) |> json_response(200)
     {put_req_header(conn, "authorization", "Bearer " <> body["data"]["access_token"]), body}
   end
@@ -84,7 +82,7 @@ defmodule Nexo.Web.Api.StudentCoreTest do
 
   describe "GET /terms" do
     test "newest first, active from SIGMA, one id and label format", %{conn: conn} do
-      {conn, _} = logged_in(conn)
+      {conn, _} = session(conn)
       body = conn |> get("/terms") |> json_response(200)
 
       assert body["data"] == [
@@ -125,7 +123,7 @@ defmodule Nexo.Web.Api.StudentCoreTest do
     end
 
     test "an expired university session asks the app to log in again", %{conn: conn} do
-      {conn, _} = logged_in(conn)
+      {conn, _} = session(conn)
       subject = subject_of("E001")
       Sessions.put(subject, %{sigma: "tok-vencido", intranet: "PHPSESSID=expired"})
 
@@ -136,7 +134,7 @@ defmodule Nexo.Web.Api.StudentCoreTest do
 
   describe "GET /profile" do
     test "merges SIGMA and the Intranet, with the right credits", %{conn: conn} do
-      {conn, _} = logged_in(conn)
+      {conn, _} = session(conn)
       body = conn |> get("/profile") |> json_response(200)
       profile = body["data"]
 
@@ -163,13 +161,13 @@ defmodule Nexo.Web.Api.StudentCoreTest do
     end
 
     test "is for students only", %{conn: conn} do
-      {conn, _} = logged_in(conn, "D001")
+      {conn, _} = session(conn, "D001")
       assert json_response(get(conn, "/profile"), 403)
     end
   end
 
   test "logout ends the Nexo session and forgets the university ones", %{conn: conn} do
-    {authed, body} = logged_in(conn)
+    {authed, body} = session(conn)
     authed |> post("/auth/logout") |> json_response(200)
 
     assert Sessions.get(subject_of("E001")) == %{}

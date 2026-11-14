@@ -8,12 +8,10 @@ defmodule Nexo.Web.Api.Routes.Student.Terms do
     description: "The student's terms, newest first, with the active one marked."
 
   alias Nexo.Academic.Terms
+  alias Nexo.Web.Api.UpstreamReply
 
   @impl true
   def handle(conn, _params) do
-    case Terms.list(conn.assigns.current_subject) do
-      {:ok, terms, sources} -> {:ok, terms, %{sources: sources, fetched_at: DateTime.utc_now()}}
-      {:error, :reauth_required} -> {:error, :reauth_required}
-    end
+    conn.assigns.current_subject |> Terms.list() |> UpstreamReply.with_sources()
   end
 end

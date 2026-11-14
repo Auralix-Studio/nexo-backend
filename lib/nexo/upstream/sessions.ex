@@ -11,11 +11,11 @@ defmodule Nexo.Upstream.Sessions do
   """
   alias Nexo.Infra.Db
   alias Nexo.Security.Vault
+  alias Nexo.Sigma
+  alias Nexo.Upstream.Intranet
 
   @collection "upstream_sessions"
   @sources ~w(sigma intranet languages)a
-
-  def collection, do: @collection
 
   @type subject :: %{type: atom(), id: String.t()}
   @type source :: :sigma | :intranet | :languages
@@ -74,25 +74,25 @@ defmodule Nexo.Upstream.Sessions do
     which is saved before returning `{:ok, value}`.
   """
   def with_session(subject, source, fun, opts \\ []) when source in @sources do
-    sessions = get(subject)
-
-    case Map.get(sessions, source) do
+    case Map.get(get(subject), source) do
       # `missing: :unavailable` for optional sources (the Language Center):
       # a session never opened is not a reason to log in again.
       nil ->
         {:error, Keyword.get(opts, :missing, :reauth_required)}
 
       session ->
+        # The other sources are re-read before writing: parallel requests of
+        # the same user must not undo each other's changes.
         case fun.(session) do
           {:ok, value, ^session} ->
             {:ok, value}
 
           {:ok, value, new_session} ->
-            put(subject, Map.put(sessions, source, new_session))
+            put(subject, Map.put(get(subject), source, new_session))
             {:ok, value}
 
           {:error, :session_expired} ->
-            put(subject, Map.delete(sessions, source))
+            put(subject, Map.delete(get(subject), source))
             {:error, :reauth_required}
 
           other ->
@@ -100,4 +100,29 @@ defmodule Nexo.Upstream.Sessions do
         end
     end
   end
+
+  @doc "SIGMA `GET path` with the stored session: `{:ok, data}` or an error."
+  def sigma_fetch(subject, path) do
+    with_session(subject, :sigma, fn token ->
+      with {:ok, data} <- Sigma.fetch(token, path), do: {:ok, data, token}
+    end)
+  end
+
+  @doc "Intranet `POST path` with the stored cookies (rotated ones are saved)."
+  def intranet_post(subject, path, form, referer),
+    do: with_session(subject, :intranet, &Intranet.post(&1, path, form, referer))
+
+  @doc "Intranet `GET path` with the stored cookies (rotated ones are saved)."
+  def intranet_get(subject, path, referer),
+    do: with_session(subject, :intranet, &Intranet.get(&1, path, referer))
+
+  @doc "A source's state for `meta.sources`: `ok`, `reauth_required` or `unavailable`."
+  def status({:ok, _}), do: "ok"
+  def status({:ok, _, _}), do: "ok"
+  def status({:error, :reauth_required}), do: "reauth_required"
+  def status(_), do: "unavailable"
+
+  @doc "The value of an `{:ok, value}` result, or `nil`."
+  def value({:ok, value}), do: value
+  def value(_), do: nil
 end

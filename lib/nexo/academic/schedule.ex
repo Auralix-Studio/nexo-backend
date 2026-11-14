@@ -16,7 +16,6 @@ defmodule Nexo.Academic.Schedule do
   """
   alias Nexo.Academic.{Languages, Terms}
   alias Nexo.Schedule.Days
-  alias Nexo.Sigma
   alias Nexo.Upstream.{Intranet, Normalize, Sessions}
 
   @doc "`{:ok, schedule, sources}` or `{:error, :reauth_required | :unknown_term}`."
@@ -42,8 +41,8 @@ defmodule Nexo.Academic.Schedule do
 
         {:ok, %{term: %{id: term.id, label: term.label}, classes: classes},
          %{
-           intranet: status(intranet),
-           sigma: if(sigma == :skipped, do: "not_needed", else: status(sigma)),
+           intranet: Sessions.status(intranet),
+           sigma: if(sigma == :skipped, do: "not_needed", else: Sessions.status(sigma)),
            languages: elem(languages, 0)
          }}
       end
@@ -192,14 +191,9 @@ defmodule Nexo.Academic.Schedule do
   # --- SIGMA --------------------------------------------------------------------------
 
   defp from_sigma(subject) do
-    Sessions.with_session(subject, :sigma, fn token ->
-      with {:ok, data} <- Sigma.fetch(token, "/Intranet/ListarHorariosEstudianteIntranet/*/*") do
-        classes =
-          for row <- List.wrap(data), is_map(row), class = sigma_class(row), do: class
-
-        {:ok, classes, token}
-      end
-    end)
+    with {:ok, data} <-
+           Sessions.sigma_fetch(subject, "/Intranet/ListarHorariosEstudianteIntranet/*/*"),
+         do: {:ok, for(row <- List.wrap(data), is_map(row), class = sigma_class(row), do: class)}
   end
 
   defp sigma_class(row) do
@@ -296,8 +290,4 @@ defmodule Nexo.Academic.Schedule do
     |> Base.url_encode64(padding: false)
     |> binary_part(0, 16)
   end
-
-  defp status({:ok, _}), do: "ok"
-  defp status({:error, :reauth_required}), do: "reauth_required"
-  defp status(_), do: "unavailable"
 end

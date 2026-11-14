@@ -75,23 +75,8 @@ defmodule Nexo.Infra.Db do
       %{key: %{expires_at: 1}, name: "expires_ttl", expireAfterSeconds: 0}
     ])
 
-    create_indexes("teacher_sections", [
-      %{key: %{teacher_id: 1, cle_auto: 1}, name: "teacher_section_unique", unique: true}
-    ])
-
     create_indexes("students", [
       %{key: %{code: 1}, name: "code_unique", unique: true}
-    ])
-
-    # Un consentimiento vigente por estudiante y ámbito; el histórico de
-    # revocaciones se conserva, por eso el índice no es único.
-    create_indexes("consents", [
-      %{key: %{student_code: 1, scope: 1}, name: "student_scope_idx"},
-      %{key: %{granted_at: -1}, name: "granted_at_idx"}
-    ])
-
-    create_indexes("student_snapshots", [
-      %{key: %{student_code: 1, module: 1}, name: "student_module_unique", unique: true}
     ])
 
     create_indexes("directory_access", [

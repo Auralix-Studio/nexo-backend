@@ -68,6 +68,10 @@ config :logger, :default_formatter,
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
+# Request logs never show secrets: passwords, guardian PINs, refresh tokens
+# and device codes (substring match: `new_password`, `device_code`…).
+config :phoenix, :filter_parameters, ["password", "pin", "clave", "token", "secret", "code"]
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"

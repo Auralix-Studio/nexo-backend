@@ -12,9 +12,8 @@ defmodule Nexo.Web.Api.Routes.Teaching.Roster do
 
   @impl true
   def handle(conn, params) do
-    subject = conn.assigns.current_subject
-
-    Nexo.Teaching.Gradebook.roster(subject, params.id)
+    conn.assigns.current_subject
+    |> Nexo.Teaching.Gradebook.roster(params.id)
     |> UpstreamReply.reply()
   end
 end

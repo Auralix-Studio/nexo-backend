@@ -1,10 +1,8 @@
 defmodule Nexo.People.Students do
   @moduledoc """
-  Registro mínimo de estudiantes (colección `students`).
-
-  A propósito guarda lo imprescindible para identificar a quien consiente:
-  código y nombre. Todo lo demás —notas, pagos, horario— vive en
-  `Nexo.Access.Consents` y solo si el estudiante lo autorizó.
+  Minimal student records (collection `students`): code and name, enough to
+  identify who logs in. Grades, payments and schedule are read live from the
+  university, never stored here.
   """
   alias Nexo.Infra.Db
 

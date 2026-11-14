@@ -30,11 +30,17 @@ defmodule Nexo.Upstream.Intranet.Http do
            ) do
       cookies = merge_cookies(cookies, res)
 
-      if res.status == 302 and location(res) =~ "inicio" do
-        _ = request(:get, "inicio?filtro=noticias", cookies, "login", nil)
-        {:ok, cookies}
-      else
-        {:error, :invalid_credentials}
+      cond do
+        res.status == 302 and location(res) =~ "inicio" ->
+          _ = request(:get, "inicio?filtro=noticias", cookies, "login", nil)
+          {:ok, cookies}
+
+        # An outage is not a wrong password.
+        res.status >= 500 ->
+          {:error, :unavailable}
+
+        true ->
+          {:error, :invalid_credentials}
       end
     end
   end

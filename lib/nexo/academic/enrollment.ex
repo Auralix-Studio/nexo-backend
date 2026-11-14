@@ -10,6 +10,7 @@ defmodule Nexo.Academic.Enrollment do
   21 career label. Placeholders (`-------`) become `null`, numbers become
   numbers, names lose the all-caps.
   """
+  import Nexo.Upstream.Normalize, only: [tidy: 1]
   alias Nexo.Academic.{Profile, Terms}
   alias Nexo.Upstream.Normalize
 
@@ -17,7 +18,7 @@ defmodule Nexo.Academic.Enrollment do
   def get(subject, student, term_id \\ nil) do
     with {:ok, term} <- Terms.resolve(subject, term_id),
          {:ok, rows} <- Profile.intranet_certificate(subject, term) do
-      {:ok, build(rows, term, student, lima_today()), %{source: "intranet"}}
+      {:ok, build(rows, term, student, Normalize.lima_today()), %{source: "intranet"}}
     end
   end
 
@@ -63,10 +64,4 @@ defmodule Nexo.Academic.Enrollment do
       issued_at: Date.to_iso8601(today)
     }
   end
-
-  defp tidy(nil), do: nil
-  defp tidy(n) when is_float(n) and n == trunc(n), do: trunc(n)
-  defp tidy(n), do: n
-
-  defp lima_today, do: DateTime.utc_now() |> DateTime.add(-5 * 3600) |> DateTime.to_date()
 end

@@ -9,47 +9,36 @@ defmodule Nexo.Web.DirectoryTest do
   use Nexo.Web.ConnCase, async: false
 
   alias Nexo.Academic.Directory
-
-  alias Nexo.Access.DirectoryAccess
-
-  alias Nexo.Infra.Db
   alias Nexo.Academic.Directory.Prototype
+  alias Nexo.Access.DirectoryAccess
+  alias Nexo.Infra.Db
+  alias Nexo.People.{Students, Teachers}
 
   @admin "62017241"
 
   setup do
-    for collection <- [
-          "teachers",
-          "students",
-          "refresh_tokens",
-          "audit_log",
-          "directory_access",
-          "directory_students"
-        ] do
-      Mongo.delete_many(Db.conn(), collection, %{})
-    end
-
+    wipe(~w(teachers students refresh_tokens audit_log directory_access directory_students))
     Db.ensure_indexes()
     :ok = Directory.replace_all(Prototype.generate(12, 42))
     :ok
   end
 
-  defp login_student(conn, usuario \\ "E001") do
-    %{"access_token" => token} =
-      conn
-      |> post("/api/v1/auth/student/login", %{"usuario" => usuario, "clave" => "ok"})
-      |> json_response(200)
+  defp login_student(conn, code \\ "E001") do
+    {:ok, student} =
+      Students.upsert_from_sigma(%{code: code, first_name: "Ana", last_name: "Rojas"})
 
-    put_req_header(conn, "authorization", "Bearer #{token}")
+    bearer(conn, :student, Db.id_to_string(student["_id"]))
   end
 
-  defp login_teacher(conn, usuario \\ "D001") do
-    %{"access_token" => token} =
-      conn
-      |> post("/api/v1/auth/teacher/login", %{"usuario" => usuario, "clave" => "ok"})
-      |> json_response(200)
+  defp login_teacher(conn) do
+    {:ok, teacher} =
+      Teachers.upsert_teacher_from_sigma(%{
+        code: "D001",
+        first_name: "María",
+        last_name: "Quispe"
+      })
 
-    put_req_header(conn, "authorization", "Bearer #{token}")
+    bearer(conn, :teacher, Db.id_to_string(teacher["_id"]))
   end
 
   test "sin token no se llega ni a preguntar por el acceso", %{conn: conn} do
@@ -166,8 +155,8 @@ defmodule Nexo.Web.DirectoryTest do
 
   describe "administración del acceso" do
     setup %{conn: conn} do
-      # `ADMIN-SYS` inicia sesión con un código que está en SYSTEM_ADMINS.
-      %{admin: login_student(conn, "ADMIN-SYS")}
+      # The code is in SYSTEM_ADMINS (config/test.exs).
+      %{admin: login_student(conn, @admin)}
     end
 
     test "el administrador entra sin que nadie lo autorice", %{admin: admin} do

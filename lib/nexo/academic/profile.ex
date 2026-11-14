@@ -12,9 +12,9 @@ defmodule Nexo.Academic.Profile do
       cycles become integers whatever their padding;
     * a source that does not answer leaves `null` fields, never zeros.
   """
-  alias Nexo.Academic.Terms
-  alias Nexo.Sigma
-  alias Nexo.Upstream.{Intranet, Normalize, Sessions}
+  import Nexo.Upstream.Sessions, only: [value: 1]
+  alias Nexo.Academic.{Grades, Terms}
+  alias Nexo.Upstream.{Normalize, Sessions}
 
   @doc "`{:ok, profile, sources}` or `{:error, :reauth_required}`."
   def get(subject, student) do
@@ -38,7 +38,7 @@ defmodule Nexo.Academic.Profile do
         {:exit, _} -> {:error, :unavailable}
       end)
 
-    summary = sigma_summary(subject, ok(info))
+    summary = sigma_summary(subject, value(info))
 
     if Enum.all?([info, datos, certificate], &match?({:error, :reauth_required}, &1)) do
       {:error, :reauth_required}
@@ -50,7 +50,7 @@ defmodule Nexo.Academic.Profile do
 
       profile =
         student
-        |> build(ok(info), ok(summary), ok(datos), ok(certificate), active)
+        |> build(value(info), value(summary), value(datos), value(certificate), active)
         |> with_curriculum_totals(subject, student)
 
       {:ok, profile, sources}
@@ -69,13 +69,13 @@ defmodule Nexo.Academic.Profile do
        do: profile
 
   defp with_curriculum_totals(profile, subject, student) do
-    case Nexo.Academic.Grades.curriculum(subject, student) do
+    case Grades.curriculum(subject, student) do
       {:ok, %{courses: courses} = curriculum, _} ->
         passed =
           Enum.filter(
             courses,
             &(&1.status == "completed" and is_number(&1.grade) and is_number(&1.credits) and
-                &1.grade >= Nexo.Academic.Grades.passing())
+                &1.grade >= Grades.passing())
           )
 
         credits = passed |> Enum.map(& &1.credits) |> Enum.sum()
@@ -100,35 +100,27 @@ defmodule Nexo.Academic.Profile do
   # --- Upstream reads -----------------------------------------------------------
 
   defp sigma_info(subject) do
-    Sessions.with_session(subject, :sigma, fn token ->
-      with {:ok, data} <- Sigma.fetch(token, "/Estudiante/MostrarInfoEstudiante") do
-        {:ok, first_map(data), token}
-      end
-    end)
+    with {:ok, data} <- Sessions.sigma_fetch(subject, "/Estudiante/MostrarInfoEstudiante"),
+         do: {:ok, first_map(data)}
   end
 
   defp sigma_summary(_subject, nil), do: {:error, :unavailable}
 
   defp sigma_summary(subject, info) do
     with plan when is_binary(plan) <- Normalize.text(info["pes_Id"]),
-         level when is_binary(level) <- Normalize.text(info["nivel"]) do
-      Sessions.with_session(subject, :sigma, fn token ->
-        with {:ok, data} <-
-               Sigma.fetch(token, "/Estudiante/MostrarNotasResumen/#{plan}/#{level}") do
-          {:ok, first_map(data), token}
-        end
-      end)
+         level when is_binary(level) <- Normalize.text(info["nivel"]),
+         {:ok, data} <-
+           Sessions.sigma_fetch(subject, "/Estudiante/MostrarNotasResumen/#{plan}/#{level}") do
+      {:ok, first_map(data)}
     else
+      {:error, _} = error -> error
       _ -> {:error, :unavailable}
     end
   end
 
   defp intranet_basic(subject) do
-    Sessions.with_session(subject, :intranet, fn cookies ->
-      with {:ok, rows, cookies} <- Intranet.get(cookies, "datosEstudianteMatriculado", "inicio") do
-        {:ok, first_row(rows), cookies}
-      end
-    end)
+    with {:ok, rows} <- Sessions.intranet_get(subject, "datosEstudianteMatriculado", "inicio"),
+         do: {:ok, first_row(rows)}
   end
 
   @doc """
@@ -138,17 +130,16 @@ defmodule Nexo.Academic.Profile do
   def intranet_certificate(_subject, nil), do: {:error, :unavailable}
 
   def intranet_certificate(subject, term) do
-    Sessions.with_session(subject, :intranet, fn cookies ->
-      with {:ok, rows, cookies} <-
-             Intranet.post(
-               cookies,
-               "consultarConstanciaMatriculaEstudiante",
-               %{"periodo" => "#{term.year}-#{term.number}"},
-               "pg_reportesDelEstudiante"
-             ) do
-        {:ok, Enum.filter(rows, &(is_list(&1) and length(&1) >= 18)), cookies}
-      end
-    end)
+    form = %{"periodo" => "#{term.year}-#{term.number}"}
+
+    with {:ok, rows} <-
+           Sessions.intranet_post(
+             subject,
+             "consultarConstanciaMatriculaEstudiante",
+             form,
+             "pg_reportesDelEstudiante"
+           ),
+         do: {:ok, Enum.filter(rows, &(is_list(&1) and length(&1) >= 18))}
   end
 
   # --- Building -------------------------------------------------------------------
@@ -215,7 +206,7 @@ defmodule Nexo.Academic.Profile do
         required: int_or_nil(Normalize.positive(summary["creditosTotales"])),
         enrolled_this_term: enrolled_credits
       },
-      average: %{cumulative: round2(Normalize.positive(summary["promedio"]))}
+      average: %{cumulative: Normalize.round2(Normalize.positive(summary["promedio"]))}
     }
   end
 
@@ -227,9 +218,6 @@ defmodule Nexo.Academic.Profile do
 
   defp first_row([first | _]) when is_list(first), do: first
   defp first_row(_), do: nil
-
-  defp ok({:ok, value}), do: value
-  defp ok(_), do: nil
 
   defp worst(results) do
     cond do
@@ -245,7 +233,4 @@ defmodule Nexo.Academic.Profile do
 
   defp int_or_nil(nil), do: nil
   defp int_or_nil(n), do: round(n)
-
-  defp round2(nil), do: nil
-  defp round2(n), do: Float.round(n * 1.0, 2)
 end

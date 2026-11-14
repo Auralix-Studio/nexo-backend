@@ -25,8 +25,6 @@ defmodule Nexo.Access.DirectoryAccess do
   @collection "directory_access"
   @statuses ~w(activo revocado)
 
-  def valid_statuses, do: @statuses
-
   @doc "Códigos con potestad para conceder acceso (DNI o código SIGMA)."
   def system_admins do
     :nexo
@@ -75,10 +73,6 @@ defmodule Nexo.Access.DirectoryAccess do
   """
   def grant(code, granted_by, opts \\ []) when is_binary(code) and code != "" do
     set(code, "activo", granted_by, opts)
-  end
-
-  def revoke(code, revoked_by, opts \\ []) when is_binary(code) do
-    set(code, "revocado", revoked_by, opts)
   end
 
   def set_status(code, status, actor, opts \\ [])

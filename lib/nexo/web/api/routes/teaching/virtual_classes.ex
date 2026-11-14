@@ -11,9 +11,8 @@ defmodule Nexo.Web.Api.Routes.Teaching.VirtualClasses do
 
   @impl true
   def handle(conn, _params) do
-    subject = conn.assigns.current_subject
-
-    Nexo.Teaching.Presence.virtual_classes(subject)
+    conn.assigns.current_subject
+    |> Nexo.Teaching.Presence.virtual_classes()
     |> UpstreamReply.reply()
   end
 end

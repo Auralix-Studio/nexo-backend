@@ -11,9 +11,7 @@ defmodule Nexo.Web.Api.Routes.Teaching.Sections do
 
   @impl true
   def handle(conn, _params) do
-    subject = conn.assigns.current_subject
-
-    case Nexo.Teaching.Sections.list(subject) do
+    case Nexo.Teaching.Sections.list(conn.assigns.current_subject) do
       {:ok, sections} -> {:ok, sections, %{source: "sigma"}}
       error -> error
     end

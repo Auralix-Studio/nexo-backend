@@ -16,11 +16,10 @@ defmodule Nexo.Web.Api.Routes.Teaching.Compliance do
 
   @impl true
   def handle(conn, params) do
-    subject = conn.assigns.current_subject
-
     {from, to} = Nexo.Web.Api.Routes.Teaching.Items.range(params, 14)
 
-    Nexo.Teaching.Presence.compliance(subject, from, to)
+    conn.assigns.current_subject
+    |> Nexo.Teaching.Presence.compliance(from, to)
     |> UpstreamReply.reply()
   end
 end

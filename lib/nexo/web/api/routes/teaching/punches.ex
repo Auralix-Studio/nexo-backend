@@ -15,11 +15,10 @@ defmodule Nexo.Web.Api.Routes.Teaching.Punches do
 
   @impl true
   def handle(conn, params) do
-    subject = conn.assigns.current_subject
-
     {from, to} = Nexo.Web.Api.Routes.Teaching.Items.range(params, 30)
 
-    Nexo.Teaching.Presence.punches(subject, from, to)
+    conn.assigns.current_subject
+    |> Nexo.Teaching.Presence.punches(from, to)
     |> UpstreamReply.reply()
   end
 end

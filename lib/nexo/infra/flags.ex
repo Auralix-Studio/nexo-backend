@@ -18,8 +18,6 @@ defmodule Nexo.Infra.Flags do
   @collection "feature_flags"
   @ttl :timer.seconds(30)
 
-  def collection, do: @collection
-
   def enabled?(name) when is_binary(name) do
     case Cache.fetch({:flag, name}, @ttl, fn -> lookup(name) end) do
       {:ok, enabled} -> enabled

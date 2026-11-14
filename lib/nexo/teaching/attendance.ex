@@ -11,8 +11,7 @@ defmodule Nexo.Teaching.Attendance do
   date format with unpadded time. Suspended students are always recorded as
   suspended. Units SIGMA hides on its attendance screen are filtered.
   """
-  alias Nexo.Security.Audit
-  alias Nexo.Teaching.{Sections, Upstream}
+  alias Nexo.Teaching.{Gradebook, Sections, Upstream}
   alias Nexo.Upstream.Normalize
 
   @hidden_units [212, 214, 215, 115, 116]
@@ -40,11 +39,7 @@ defmodule Nexo.Teaching.Attendance do
                {:ok, {units, server_time(get), Upstream.maps(rows)}}
              end
            end) do
-      Audit.log(:section_attendance_read, %{
-        actor_type: "teacher",
-        actor_id: subject.id,
-        detail: %{section: section.id}
-      })
+      Upstream.audit(subject, :section_attendance_read, %{section: section.id})
 
       {:ok, build(section.id, units, time, rows), %{source: "sigma"}}
     end
@@ -95,7 +90,7 @@ defmodule Nexo.Teaching.Attendance do
     }
   end
 
-  defp suspended?(row), do: Nexo.Teaching.Gradebook.suspended?(row["observacion"])
+  defp suspended?(row), do: Gradebook.suspended?(row["observacion"])
 
   defp marks(row) do
     for m <- Upstream.maps(row["detalle"]),
@@ -203,7 +198,7 @@ defmodule Nexo.Teaching.Attendance do
                with {:ok, saved} <- saved do
                  {:ok,
                   %{
-                    session: session_id(now_text(now)),
+                    session: session_id(upstream_time(now)),
                     saved: saved,
                     failed: for({:failed, f} <- failed, do: f)
                   }}
@@ -340,13 +335,6 @@ defmodule Nexo.Teaching.Attendance do
     "#{y}-#{two.(mo)}-#{two.(d)} #{h}:#{mi}:#{s}"
   end
 
-  defp now_text(parts), do: upstream_time(parts)
-
-  defp audit(subject, action, section, detail) do
-    Audit.log(action, %{
-      actor_type: "teacher",
-      actor_id: subject.id,
-      detail: Map.merge(%{section: section.id}, detail)
-    })
-  end
+  defp audit(subject, action, section, detail),
+    do: Upstream.audit(subject, action, Map.put(detail, :section, section.id))
 end

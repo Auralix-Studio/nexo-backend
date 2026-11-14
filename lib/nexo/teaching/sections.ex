@@ -60,9 +60,6 @@ defmodule Nexo.Teaching.Sections do
     |> Map.update!(:schedule, &Enum.map(&1, fn b -> public_block(b) end))
   end
 
-  @doc "Drops the cached list (after a write, or to refresh)."
-  def forget(%{id: id}), do: Cache.delete({:teacher_sections, id})
-
   @doc """
   Crosses the two lists and drops duplicates. Each grades row takes its best
   attendance row (same NRC; +2 same section, +1 same career); attendance rows

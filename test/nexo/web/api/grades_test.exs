@@ -5,25 +5,14 @@ defmodule Nexo.Web.Api.GradesTest do
   @moduletag :capture_log
 
   alias Nexo.Academic.Grades
-  alias Nexo.Infra.{Db, RateLimiter}
+  alias Nexo.Infra.RateLimiter
 
   setup do
     RateLimiter.reset()
 
-    for c <- ~w(students refresh_tokens upstream_sessions) do
-      Mongo.delete_many(Db.conn(), c, %{})
-    end
+    wipe(~w(students refresh_tokens upstream_sessions))
 
     :ok
-  end
-
-  defp logged_in(conn, user) do
-    body =
-      conn
-      |> post("/auth/login", %{"user" => user, "password" => "ok"})
-      |> json_response(200)
-
-    put_req_header(conn, "authorization", "Bearer " <> body["data"]["access_token"])
   end
 
   describe "GET /grades (competencies)" do

@@ -1,14 +1,13 @@
 defmodule Nexo.Security.Auth do
   @moduledoc """
-  Tokens propios del backend, tanto para docentes como para estudiantes.
+  The backend's own tokens for teachers, students and guardians.
 
-  - Acceso: `Phoenix.Token` firmado, vida corta (15 min). Lleva el tipo de
-    sujeto y su id; el estado (allowlist, consentimiento) se relee de la base
-    en cada petición, así una suspensión o una revocación surten efecto
-    inmediato aunque el token siga vigente.
-  - Refresh: token opaco de 30 días en la colección `refresh_tokens`; solo se
-    guarda su hash SHA-256, es revocable y rota en cada uso (rotación atómica
-    vía `find_one_and_update`). Un índice TTL purga los vencidos.
+    * Access: a signed `Phoenix.Token` (15 minutes) with the subject type and
+      id. The subject is reloaded on every request, so a revocation takes
+      effect at once.
+    * Refresh: an opaque 30-day token in `refresh_tokens`, stored only as its
+      SHA-256 hash, single use (rotated atomically with
+      `find_one_and_update`). A TTL index purges expired ones.
   """
   alias Nexo.Infra.Db
 
@@ -53,7 +52,7 @@ defmodule Nexo.Security.Auth do
     raw
   end
 
-  @doc "Valida un refresh token y lo rota: el usado queda revocado atómicamente."
+  @doc "Validates a refresh token and rotates it: the used one is revoked atomically."
   def exchange_refresh_token(raw) when is_binary(raw) do
     now = Db.now()
 
@@ -80,7 +79,7 @@ defmodule Nexo.Security.Auth do
 
   def exchange_refresh_token(_), do: {:error, :invalid_token}
 
-  @doc "Corta todas las sesiones de un sujeto (suspensión, cierre de sesión)."
+  @doc "Ends every session of a subject (logout)."
   def revoke_all(type, id) do
     Mongo.update_many(
       Db.conn(),

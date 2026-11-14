@@ -1,9 +1,8 @@
 defmodule Nexo.Security.Audit do
   @moduledoc """
-  Registro de auditoría (colección `audit_log`): toda acción sensible — login,
-  aprobación, lectura de datos de un alumno — queda con actor, acción,
-  objetivo, IP y timestamp. Es requisito de la Ley 29733 poder demostrar
-  quién accedió a qué.
+  Audit log (collection `audit_log`): every sensitive action (login, a
+  student's record read, a grade written) with actor, target, IP and time.
+  Peru's Law 29733 requires showing who accessed what.
   """
   alias Nexo.Infra.Db
 

@@ -12,9 +12,8 @@ defmodule Nexo.Web.Api.Routes.Teaching.Punch do
 
   @impl true
   def handle(conn, params) do
-    subject = conn.assigns.current_subject
-
-    Nexo.Teaching.Presence.punch(subject, params.id)
+    conn.assigns.current_subject
+    |> Nexo.Teaching.Presence.punch(params.id)
     |> UpstreamReply.reply()
   end
 end

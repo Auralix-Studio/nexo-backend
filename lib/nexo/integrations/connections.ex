@@ -29,9 +29,6 @@ defmodule Nexo.Integrations.Connections do
   @poll_interval_s 5
   @access_ttl_s 3600
 
-  def scopes, do: @scopes
-  def requests_collection, do: @requests
-  def grants_collection, do: @grants
   def poll_interval, do: @poll_interval_s
 
   # --- 1. The app starts a request ---------------------------------------------
@@ -225,22 +222,23 @@ defmodule Nexo.Integrations.Connections do
     refresh = Tokens.generate("nxr_")
     now = Db.now()
 
-    {:ok, %{modified_count: 1}} =
-      Mongo.update_one(
-        Db.conn(),
-        @grants,
-        %{_id: grant["_id"], refresh_hash: grant["refresh_hash"]},
-        %{
-          "$set" => %{
-            access_hash: Tokens.hash(access),
-            access_expires_at: DateTime.add(now, @access_ttl_s, :second),
-            refresh_hash: Tokens.hash(refresh),
-            refreshed_at: now
-          }
-        }
-      )
-
-    {:ok, token_response(access, refresh, grant["scopes"])}
+    # A parallel refresh with the same token loses the race: invalid grant.
+    case Mongo.update_one(
+           Db.conn(),
+           @grants,
+           %{_id: grant["_id"], refresh_hash: grant["refresh_hash"], revoked_at: nil},
+           %{
+             "$set" => %{
+               access_hash: Tokens.hash(access),
+               access_expires_at: DateTime.add(now, @access_ttl_s, :second),
+               refresh_hash: Tokens.hash(refresh),
+               refreshed_at: now
+             }
+           }
+         ) do
+      {:ok, %{modified_count: 1}} -> {:ok, token_response(access, refresh, grant["scopes"])}
+      _ -> {:error, :invalid_grant}
+    end
   end
 
   defp token_response(access, refresh, scopes) do

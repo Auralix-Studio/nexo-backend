@@ -26,8 +26,6 @@ defmodule Nexo.People.Guardians do
   @max_attempts 5
   @lock_minutes 15
 
-  def collection, do: @collection
-
   def get(id) when is_binary(id) do
     case Db.parse_id(id) do
       {:ok, oid} -> Mongo.find_one(Db.conn(), @collection, %{_id: oid})
@@ -133,6 +131,8 @@ defmodule Nexo.People.Guardians do
   def verify(dni, pin) when is_binary(dni) and is_binary(pin) do
     case get_by_dni(dni) do
       nil ->
+        # Same work as a wrong PIN, so timing does not reveal unknown DNIs.
+        _ = derive(pin, <<0::128>>, @iterations)
         {:error, :invalid}
 
       guardian ->
@@ -174,25 +174,29 @@ defmodule Nexo.People.Guardians do
     Map.merge(guardian, %{"failed_attempts" => 0, "last_access_at" => now})
   end
 
+  # The counter is bumped atomically: parallel guesses must not share one count.
   defp on_failure(%{"_id" => id} = guardian) do
-    attempts = (guardian["failed_attempts"] || 0) + 1
-    locked = attempts >= @max_attempts
+    attempts =
+      case Mongo.find_one_and_update(
+             Db.conn(),
+             @collection,
+             %{_id: id},
+             %{"$inc" => %{"failed_attempts" => 1}, "$set" => %{"updated_at" => Db.now()}},
+             return_document: :after
+           ) do
+        {:ok, %{value: %{"failed_attempts" => n}}} -> n
+        _ -> (guardian["failed_attempts"] || 0) + 1
+      end
 
-    updates = %{"failed_attempts" => attempts, "updated_at" => Db.now()}
+    if attempts >= @max_attempts do
+      until = DateTime.add(Db.now(), @lock_minutes * 60, :second)
 
-    updates =
-      if locked,
-        do:
-          Map.put(
-            updates,
-            "locked_until",
-            DateTime.add(Db.now(), @lock_minutes * 60, :second)
-          ),
-        else: updates
+      Mongo.update_one(Db.conn(), @collection, %{_id: id}, %{"$set" => %{"locked_until" => until}})
 
-    Mongo.update_one(Db.conn(), @collection, %{_id: id}, %{"$set" => updates})
-
-    if locked, do: {:error, :locked}, else: {:error, :invalid}
+      {:error, :locked}
+    else
+      {:error, :invalid}
+    end
   end
 
   defp pin_fields(pin, now) do

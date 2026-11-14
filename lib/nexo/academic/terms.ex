@@ -7,8 +7,7 @@ defmodule Nexo.Academic.Terms do
   row). Labels differ too (`"2026 - 1"`, `"2025 - II"`). The result is one
   list, newest first, with ids like `"2026-1"` and labels like `"2026-I"`.
   """
-  alias Nexo.Sigma
-  alias Nexo.Upstream.{Intranet, Normalize, Sessions}
+  alias Nexo.Upstream.{Normalize, Sessions}
 
   @type term_info :: %{
           id: String.t(),
@@ -29,7 +28,7 @@ defmodule Nexo.Academic.Terms do
 
       _ ->
         {:ok, merge(rows(sigma), rows(intranet)),
-         %{sigma: status(sigma), intranet: status(intranet)}}
+         %{sigma: Sessions.status(sigma), intranet: Sessions.status(intranet)}}
     end
   end
 
@@ -49,43 +48,35 @@ defmodule Nexo.Academic.Terms do
   end
 
   defp from_sigma(subject) do
-    Sessions.with_session(subject, :sigma, fn token ->
-      with {:ok, data} <- Sigma.fetch(token, "/Recursos/ListarPeriodosEstudiante") do
-        rows =
-          for row <- List.wrap(data),
-              is_map(row),
-              year = Normalize.int(row["anio"]),
-              number = Normalize.int(row["periodo"]),
-              is_integer(year) and is_integer(number),
-              do: %{year: year, number: number, active: Normalize.bool(row["activo"])}
+    with {:ok, data} <- Sessions.sigma_fetch(subject, "/Recursos/ListarPeriodosEstudiante") do
+      rows =
+        for row <- List.wrap(data),
+            is_map(row),
+            year = Normalize.int(row["anio"]),
+            number = Normalize.int(row["periodo"]),
+            is_integer(year) and is_integer(number),
+            do: %{year: year, number: number, active: Normalize.bool(row["activo"])}
 
-        {:ok, rows, token}
-      end
-    end)
+      {:ok, rows}
+    end
   end
 
   defp from_intranet(subject) do
-    Sessions.with_session(subject, :intranet, fn cookies ->
-      with {:ok, data, cookies} <-
-             Intranet.post(cookies, "consultarPeriodosMatriculados", %{}, "inicio") do
-        rows =
-          for [y, n | _] <- data,
-              year = Normalize.int(y),
-              number = Normalize.int(n),
-              is_integer(year) and is_integer(number),
-              do: %{year: year, number: number, active: false}
+    with {:ok, data} <-
+           Sessions.intranet_post(subject, "consultarPeriodosMatriculados", %{}, "inicio") do
+      rows =
+        for [y, n | _] <- data,
+            year = Normalize.int(y),
+            number = Normalize.int(n),
+            is_integer(year) and is_integer(number),
+            do: %{year: year, number: number, active: false}
 
-        {:ok, rows, cookies}
-      end
-    end)
+      {:ok, rows}
+    end
   end
 
   defp rows({:ok, rows}), do: rows
   defp rows(_), do: []
-
-  defp status({:ok, _}), do: "ok"
-  defp status({:error, :reauth_required}), do: "reauth_required"
-  defp status(_), do: "unavailable"
 
   @doc false
   def merge(sigma_rows, intranet_rows) do

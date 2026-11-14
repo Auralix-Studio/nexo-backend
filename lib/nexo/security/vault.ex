@@ -1,12 +1,11 @@
 defmodule Nexo.Security.Vault do
   @moduledoc """
-  Cifrado simétrico para los pocos datos sensibles que sí deben persistir.
+  Symmetric encryption of the few sensitive values that must persist: the
+  university sessions (`Nexo.Upstream.Sessions`) and the data students share
+  (`Nexo.Integrations.SharedData`). Passwords are never stored.
 
-  Hoy protege el token de sesión de SIGMA: no es una credencial (la contraseña
-  nunca se guarda), pero permite consultar en nombre del docente, así que en la
-  base solo vive cifrado. AES-256-GCM con clave derivada de `SECRET_KEY_BASE`:
-  rotar ese secreto invalida los tokens guardados, que es el comportamiento
-  deseado.
+  AES-256-GCM with a key derived from `SECRET_KEY_BASE`: rotating that
+  secret invalidates what was stored, which is the intended behaviour.
   """
 
   @aad "nexo.vault.v1"

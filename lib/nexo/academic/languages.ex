@@ -112,7 +112,8 @@ defmodule Nexo.Academic.Languages do
       end)
       |> Map.new()
 
-    today = Date.utc_today()
+    # The current month is Lima's: UTC is already next month on the last evening.
+    today = Normalize.lima_today()
     Enum.map(rows, &course(&1, Map.get(grades, Normalize.int(&1["detMatriculaId"])), today))
   end
 

@@ -11,7 +11,6 @@ defmodule Nexo.Teaching.Gradebook do
   backend picks insert or update, validates the range, skips unchanged
   values and reports per student. `tipoCalif` 0 means 12 upstream.
   """
-  alias Nexo.Security.Audit
   alias Nexo.Teaching.{Sections, Upstream}
   alias Nexo.Upstream.Normalize
 
@@ -324,24 +323,17 @@ defmodule Nexo.Teaching.Gradebook do
       {:ok, %{success: false}} ->
         {0, Enum.map(items, &%{student: elem(&1, 0), reason: "rejected"})}
 
-      {:error, :session_expired} = error ->
-        throw_expired(error)
+      # A dead session mid-write must surface as reauth, not as per-student errors.
+      {:error, :session_expired} ->
+        raise Nexo.Teaching.SessionExpired
 
       {:error, _} ->
         {0, Enum.map(items, &%{student: elem(&1, 0), reason: "upstream_unavailable"})}
     end
   end
 
-  # A dead session mid-write must surface as reauth, not as per-student errors.
-  defp throw_expired(_), do: raise(Nexo.Teaching.SessionExpired)
-
-  defp audit(subject, action, section, detail \\ %{}) do
-    Audit.log(action, %{
-      actor_type: "teacher",
-      actor_id: subject.id,
-      detail: Map.merge(%{section: section.id}, detail)
-    })
-  end
+  defp audit(subject, action, section, detail \\ %{}),
+    do: Upstream.audit(subject, action, Map.put(detail, :section, section.id))
 end
 
 defmodule Nexo.Teaching.SessionExpired do

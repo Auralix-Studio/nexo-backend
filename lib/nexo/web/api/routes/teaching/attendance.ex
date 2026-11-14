@@ -12,9 +12,8 @@ defmodule Nexo.Web.Api.Routes.Teaching.Attendance do
 
   @impl true
   def handle(conn, params) do
-    subject = conn.assigns.current_subject
-
-    Nexo.Teaching.Attendance.sheet(subject, params.id)
+    conn.assigns.current_subject
+    |> Nexo.Teaching.Attendance.sheet(params.id)
     |> UpstreamReply.reply()
   end
 end

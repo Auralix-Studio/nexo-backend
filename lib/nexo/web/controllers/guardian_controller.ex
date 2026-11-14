@@ -1,35 +1,37 @@
 defmodule Nexo.Web.GuardianController do
+  @moduledoc "Legacy guardian access: DNI + PIN login and their children's records."
   use Nexo.Web, :controller
 
   alias Nexo.Academic.Directory
-
   alias Nexo.Infra.Db
-
   alias Nexo.People.Guardians
-
   alias Nexo.Security.{Audit, Auth}
+  alias Nexo.Web.{ClientIp, DirectoryController}
 
-  @doc """
-  Entrada del apoderado: DNI + PIN. Sin cuenta de la UPLA de por medio, que es
-  justamente el caso que resuelve este acceso.
-  """
   def login(conn, %{"dni" => dni, "pin" => pin}) when is_binary(dni) and is_binary(pin) do
-    case Guardians.verify(String.trim(dni), String.trim(pin)) do
+    dni = String.trim(dni)
+
+    case Guardians.verify(dni, String.trim(pin)) do
       {:ok, guardian} ->
         id = Db.id_to_string(guardian["_id"])
-
-        Audit.log(:guardian_login, %{
-          actor_type: "guardian",
-          actor_id: guardian["dni"],
-          ip: client_ip(conn)
-        })
+        students = Guardians.students(guardian)
+        audit(conn, :guardian_login, guardian["dni"])
 
         json(conn, %{
           access_token: Auth.sign_access_token(:guardian, id),
           refresh_token: Auth.issue_refresh_token(:guardian, id),
           expires_in: Auth.access_ttl_seconds(),
-          apoderado: guardian_view(guardian),
-          estudiantes: summaries(guardian)
+          apoderado: %{
+            dni: guardian["dni"],
+            nombre: guardian["name"],
+            estudiantes: length(students)
+          },
+          estudiantes:
+            for(
+              code <- students,
+              s = Directory.get(code),
+              do: DirectoryController.summary_view(s)
+            )
         })
 
       {:error, :locked} ->
@@ -41,11 +43,7 @@ defmodule Nexo.Web.GuardianController do
         })
 
       {:error, :invalid} ->
-        Audit.log(:guardian_login_failed, %{
-          actor_type: "guardian",
-          actor_id: String.trim(dni),
-          ip: client_ip(conn)
-        })
+        audit(conn, :guardian_login_failed, dni)
 
         conn
         |> put_status(:unauthorized)
@@ -57,26 +55,13 @@ defmodule Nexo.Web.GuardianController do
     conn |> put_status(:bad_request) |> json(%{error: "parametros_invalidos"})
   end
 
-  @doc "Los estudiantes que este apoderado puede ver."
-  def students(conn, _params) do
-    json(conn, %{estudiantes: summaries(guardian(conn))})
-  end
-
-  @doc """
-  Ficha del estudiante. Solo la de sus propios hijos, y cada apertura queda
-  auditada igual que la de un docente.
-  """
-  def show(conn, %{"codigo" => codigo}) do
-    g = guardian(conn)
+  @doc "A child's record: only the guardian's own, and every opening is audited."
+  def show(conn, %{"codigo" => code}) do
+    guardian = conn.assigns.current_guardian
 
     cond do
-      not Guardians.linked?(g, codigo) ->
-        Audit.log(:guardian_access_denied, %{
-          actor_type: "guardian",
-          actor_id: g["dni"],
-          student_code: codigo,
-          ip: client_ip(conn)
-        })
+      not Guardians.linked?(guardian, code) ->
+        audit(conn, :guardian_access_denied, guardian["dni"], code)
 
         conn
         |> put_status(:forbidden)
@@ -85,43 +70,21 @@ defmodule Nexo.Web.GuardianController do
           detail: "Solo puedes ver la ficha de tus hijos o tutelados."
         })
 
+      record = Directory.get(code) ->
+        audit(conn, :guardian_record_read, guardian["dni"], code)
+        json(conn, %{estudiante: DirectoryController.record_view(record)})
+
       true ->
-        case Directory.get(codigo) do
-          nil ->
-            conn |> put_status(:not_found) |> json(%{error: "no_encontrado"})
-
-          record ->
-            Audit.log(:guardian_record_read, %{
-              actor_type: "guardian",
-              actor_id: g["dni"],
-              student_code: codigo,
-              ip: client_ip(conn)
-            })
-
-            json(conn, %{estudiante: Nexo.Web.DirectoryController.record_view(record)})
-        end
+        conn |> put_status(:not_found) |> json(%{error: "no_encontrado"})
     end
   end
 
-  # --- Vistas ---------------------------------------------------------------
+  defp audit(conn, action, dni, student_code \\ nil) do
+    attrs = %{actor_type: "guardian", actor_id: dni, ip: ClientIp.get(conn)}
 
-  defp summaries(guardian) do
-    guardian
-    |> Guardians.students()
-    |> Enum.map(&Directory.get/1)
-    |> Enum.reject(&is_nil/1)
-    |> Enum.map(&Nexo.Web.DirectoryController.summary_view/1)
+    Audit.log(
+      action,
+      if(student_code, do: Map.put(attrs, :student_code, student_code), else: attrs)
+    )
   end
-
-  def guardian_view(guardian) do
-    %{
-      dni: guardian["dni"],
-      nombre: guardian["name"],
-      estudiantes: length(Guardians.students(guardian))
-    }
-  end
-
-  defp guardian(conn), do: conn.assigns.current_guardian
-
-  defp client_ip(conn), do: conn.remote_ip |> :inet.ntoa() |> to_string()
 end

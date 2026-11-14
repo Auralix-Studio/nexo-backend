@@ -8,18 +8,16 @@ defmodule Nexo.Web.Api.Routes.Student.Languages do
     description: "Language Center courses with their schedule and grades."
 
   alias Nexo.Academic.Languages
+  alias Nexo.Web.Api.UpstreamReply
 
   @impl true
   def handle(conn, _params) do
     %{record: student} = subject = conn.assigns.current_subject
 
     case Languages.list(subject, student) do
-      {:ok, courses, status} ->
-        {:ok, %{courses: courses},
-         %{sources: %{languages: status}, fetched_at: DateTime.utc_now()}}
-
-      {:error, :reauth_required} ->
-        {:error, :reauth_required}
+      {:ok, courses, status} -> {:ok, %{courses: courses}, %{languages: status}}
+      error -> error
     end
+    |> UpstreamReply.with_sources()
   end
 end

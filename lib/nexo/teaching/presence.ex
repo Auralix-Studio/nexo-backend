@@ -10,7 +10,6 @@ defmodule Nexo.Teaching.Presence do
   `fecha` as `MM/dd/yyyy`, statuses `1` marked, `X` missing, `0` pending; the
   pages are walked and deduplicated here).
   """
-  alias Nexo.Security.Audit
   alias Nexo.Teaching.Upstream
   alias Nexo.Upstream.Normalize
 
@@ -83,11 +82,7 @@ defmodule Nexo.Teaching.Presence do
     end)
     |> case do
       {:ok, result} ->
-        Audit.log(:teacher_virtual_punch, %{
-          actor_type: "teacher",
-          actor_id: subject.id,
-          detail: %{class: class_id, result: result.result}
-        })
+        Upstream.audit(subject, :teacher_virtual_punch, %{class: class_id, result: result.result})
 
         {:ok, result, %{source: "sigma"}}
 

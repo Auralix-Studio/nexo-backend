@@ -14,9 +14,6 @@ defmodule Nexo.Integrations.Clients do
   @collection "integration_clients"
   @statuses ~w(active suspended)
 
-  def collection, do: @collection
-  def statuses, do: @statuses
-
   def register(name, opts \\ []) when is_binary(name) do
     client_id = "nxc_" <> (:crypto.strong_rand_bytes(12) |> Base.url_encode64(padding: false))
 

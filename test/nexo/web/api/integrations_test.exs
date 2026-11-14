@@ -40,10 +40,8 @@ defmodule Nexo.Web.Api.IntegrationsTest do
   setup %{conn: conn} do
     RateLimiter.reset()
 
-    for c <- ~w(students integration_data calendar_feeds integration_clients
-                integration_requests integration_grants) do
-      Mongo.delete_many(Db.conn(), c, %{})
-    end
+    wipe(~w(students integration_data calendar_feeds integration_clients
+                integration_requests integration_grants))
 
     {:ok, student} =
       Students.upsert_from_sigma(%{code: "U01025B", first_name: "Ana", last_name: "Rojas"})

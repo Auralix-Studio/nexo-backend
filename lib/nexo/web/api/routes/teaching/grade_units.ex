@@ -12,9 +12,8 @@ defmodule Nexo.Web.Api.Routes.Teaching.GradeUnits do
 
   @impl true
   def handle(conn, params) do
-    subject = conn.assigns.current_subject
-
-    Nexo.Teaching.Gradebook.grade_units(subject, params.id)
+    conn.assigns.current_subject
+    |> Nexo.Teaching.Gradebook.grade_units(params.id)
     |> UpstreamReply.reply()
   end
 end

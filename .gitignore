@@ -46,3 +46,7 @@ nexo-*.tar
 *.iml
 .DS_Store
 Thumbs.db
+
+# Firebase service account (FCM), never versioned
+deploy/azure/firebase-service-account.json
+*-firebase-adminsdk-*.json

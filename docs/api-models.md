@@ -49,7 +49,7 @@ stay in the backend. The app addresses everything by Nexo ids.
 | --- | --- | --- | --- |
 | `POST /auth/login` | Session | SIGMA `Login/SesionV1` (+ Intranet and Idiomas sessions opened server-side) | `SigmaRepository.login`, Intranet/Idiomas logins |
 | `POST /auth/refresh`, `POST /auth/logout` | Session | — | `SessionService` token handling |
-| `POST /me/password` | — | SIGMA `Login/ChangePassword` | `changePassword` |
+| `POST /auth/password` | — | SIGMA `Login/ChangePassword` | `changePassword` |
 | `GET /profile` | StudentProfile | Intranet `datosEstudianteMatriculado` + certificate, SIGMA `MostrarInfoEstudiante`, `MostrarNotasResumen` | `infoEstudiante` ×2, `datosEntidad`, `notasResumen` |
 | `GET /terms` | Term[] | Intranet `consultarPeriodosMatriculados`, SIGMA `ListarPeriodosEstudiante` | `periodos*` |
 | `GET /schedule?term=` | Schedule | Intranet `verhorariomatriz…`, SIGMA `ListarHorariosEstudianteIntranet`, Idiomas | `schedule`, `horarioMatriculados`, Idiomas merge |
@@ -64,7 +64,7 @@ stay in the backend. The app addresses everything by Nexo ids.
 | `GET /languages` | LanguageCourses | Idiomas `ListarMisAsignaturasMatriculadas`, `NotasInglesXDetMatriculaId` | `IdiomasRepository` |
 | `GET /publications` | Publication[] | SIGMA `ListarPublicaciones` | `publications` |
 | `GET /wifi` | Wifi | SIGMA `ObtenerWifiUsuario` | `wifiCredencial` |
-| `GET /teaching/profile` | TeacherProfile | SIGMA `GetDatosEntidad` | `infoDocente` |
+| `GET /teaching/me` | TeacherProfile | SIGMA `GetDatosEntidad` | `infoDocente` |
 | `GET /teaching/sections` | TeacherSection[] | SIGMA `GetAsignaturaDocente` ×2 (Notas + Asistencia), merged | `asignaturas` |
 | `GET /teaching/sections/{id}/students` | Roster | SIGMA `NotasEstudianteResumenV1` | `estudiantesSeccion`, `notasResumen` |
 | `GET /teaching/sections/{id}/grade-units` | GradeUnit[] | SIGMA `getTipoUnidadesV2`, `getTipoNota` | `unidadesNotas`, `tiposNota` |
@@ -78,8 +78,9 @@ stay in the backend. The app addresses everything by Nexo ids.
 | `GET /teaching/compliance?from=&to=` | Compliance[] | SIGMA `getAsistenciaDiaria` (all pages) | `cumplimiento` |
 
 Already live: `/status`, `/me`, `/me/shared`, `/me/calendar`, `/me/connections/*`,
-`/oauth/*`, `/integrations/*`, `/admin/*`, and the legacy `/api/v1/*` directory
-and guardian routes.
+`/oauth/*`, `/integrations/*`, `/admin/*`, and the legacy `/api/v1` routes the
+app still calls: `/api/v1/directory/*` (access, students, schools, grants and
+guardian links) and `/api/v1/guardian/login`, `/api/v1/guardian/students/{code}`.
 
 ## 3. Student models
 
@@ -721,3 +722,28 @@ source. They must be checked with a real account before the module ships:
 - SIGMA student endpoints (`MostrarInfoEstudiante`, schedule, grades) returned
   the HTML page in the saved samples, so their JSON keys come from the app's
   parsers and `API.md`, not from a captured response.
+
+## 7. Legal
+
+`Nexo.Legal` is the single source of truth: version, date, a summary of
+what changed and the texts (`priv/legal/*.md`, also bundled in the app).
+Bump its version when a document changes and the app asks everyone to accept
+again, without an app update.
+
+`GET /legal` (public, no attestation):
+
+```json
+{ "version": 5, "updated_at": "2026-11-14",
+  "summary": ["La app ahora se comunica solo con la API de Nexo…", "…"],
+  "documents": [
+    { "id": "terms", "title": "Términos y Condiciones", "url": "https://api.nexo.aurx.pro/terminos" },
+    { "id": "privacy", "title": "Política de Privacidad", "url": "https://api.nexo.aurx.pro/privacidad" },
+    { "id": "cookies", "title": "Política de Cookies", "url": "https://api.nexo.aurx.pro/cookies" } ] }
+```
+
+`POST /me/legal/accept` `{ "version": 5 }` (student, teacher or guardian)
+→ `{ "version": 5, "accepted_at": "…", "current": true }`. Every acceptance
+is a new row in `legal_acceptances` (subject, version, timestamp, IP, user
+agent) plus a `legal_accepted` audit entry; versions above the current one
+are `422 unknown_version`. HTML pages: `/terminos`, `/privacidad` (and
+`/privacy`), `/cookies`. `/terms` stays the students' term list.

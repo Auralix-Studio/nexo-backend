@@ -48,9 +48,13 @@ defmodule Nexo.Upstream.Login do
      })}
   end
 
-  defp student(profile, user, password, sessions, meta) do
+  # `intranet`: the Intranet login, unless it was already done.
+  defp student(profile, user, password, sessions, meta, intranet \\ nil) do
     [intranet, languages] =
-      [fn -> Intranet.login(user, password) end, fn -> Languages.login(user, password) end]
+      [
+        intranet || fn -> Intranet.login(user, password) end,
+        fn -> Languages.login(user, password) end
+      ]
       |> Task.async_stream(& &1.(), timeout: @parallel_timeout, on_timeout: :kill_task)
       |> Enum.map(fn
         {:ok, result} -> result
@@ -72,7 +76,7 @@ defmodule Nexo.Upstream.Login do
 
     sessions =
       sessions
-      |> Map.put(:intranet, ok(intranet))
+      |> Map.put(:intranet, Sessions.value(intranet))
       |> Map.put(:languages, languages_session)
 
     :ok = Sessions.put(subject, sessions)
@@ -96,7 +100,7 @@ defmodule Nexo.Upstream.Login do
   # have Intranet access, so the account is treated as a student.
   defp intranet_only(user, password, meta) do
     case Intranet.login(user, password) do
-      {:ok, _cookies} ->
+      {:ok, _cookies} = result ->
         existing = Students.get_by_code(user) || %{}
 
         profile = %{
@@ -105,9 +109,8 @@ defmodule Nexo.Upstream.Login do
           last_name: existing["last_name"] || ""
         }
 
-        with {:ok, session} <- student(profile, user, password, %{}, meta) do
-          {:ok, put_in(session, [:sources, :sigma], "unavailable")}
-        end
+        # The cookies just opened are reused: no second Intranet login.
+        student(profile, user, password, %{}, meta, fn -> result end)
 
       {:error, :invalid_credentials} ->
         {:error, :invalid_credentials}
@@ -139,12 +142,8 @@ defmodule Nexo.Upstream.Login do
     }
   end
 
-  defp ok({:ok, value}), do: value
-  defp ok(_), do: nil
-
-  defp status({:ok, _}), do: "ok"
   defp status({:error, :invalid_credentials}), do: "no_access"
-  defp status(_), do: "unavailable"
+  defp status(result), do: Sessions.status(result)
 
   defp audit(type, code, meta) do
     Audit.log(:login, Map.merge(meta, %{actor_type: to_string(type), actor_id: code}))

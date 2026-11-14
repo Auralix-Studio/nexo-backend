@@ -10,20 +10,11 @@ defmodule Nexo.Web.Api.Routes.Student.Schedule do
       "Weekly schedule of a term (default: the active one), Language Center classes included."
 
   alias Nexo.Academic.Schedule
+  alias Nexo.Web.Api.UpstreamReply
 
   @impl true
   def handle(conn, params) do
     %{record: student} = subject = conn.assigns.current_subject
-
-    case Schedule.get(subject, student, params[:term]) do
-      {:ok, schedule, sources} ->
-        {:ok, schedule, %{sources: sources, fetched_at: DateTime.utc_now()}}
-
-      {:error, :unknown_term} ->
-        {:error, 404, :unknown_term, "The student has no such term."}
-
-      {:error, :reauth_required} ->
-        {:error, :reauth_required}
-    end
+    subject |> Schedule.get(student, params[:term]) |> UpstreamReply.with_sources()
   end
 end

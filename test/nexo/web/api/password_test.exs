@@ -4,14 +4,12 @@ defmodule Nexo.Web.Api.PasswordTest do
 
   @moduletag :capture_log
 
-  alias Nexo.Infra.{Db, RateLimiter}
+  alias Nexo.Infra.RateLimiter
 
   setup do
     RateLimiter.reset()
 
-    for c <- ~w(students refresh_tokens upstream_sessions) do
-      Mongo.delete_many(Db.conn(), c, %{})
-    end
+    wipe(~w(students refresh_tokens upstream_sessions))
 
     token =
       build_conn()

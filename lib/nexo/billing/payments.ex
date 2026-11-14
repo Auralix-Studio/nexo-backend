@@ -21,6 +21,7 @@ defmodule Nexo.Billing.Payments do
   The status of each charge is computed from its due date in Lima time, not
   from which endpoint returned it.
   """
+  import Nexo.Upstream.Normalize, only: [round2: 1]
   alias Nexo.Academic.Terms
   alias Nexo.Upstream.{Intranet, Normalize, Sessions}
 
@@ -31,7 +32,7 @@ defmodule Nexo.Billing.Payments do
   # --- Debt -------------------------------------------------------------------------------
 
   @doc "`{:ok, payments, meta}` or `{:error, :reauth_required | :unavailable}`."
-  def debt(subject, student, today \\ lima_today()) do
+  def debt(subject, student, today \\ Normalize.lima_today()) do
     form = %{"codEst" => to_string(student["code"])}
 
     result =
@@ -72,9 +73,9 @@ defmodule Nexo.Billing.Payments do
     %{
       currency: @currency,
       summary: %{
-        pending_total: money(sum(charges)),
-        overdue_total: money(sum(overdue)),
-        fees_total: money(sum(fees, :amount)),
+        pending_total: round2(sum(charges)),
+        overdue_total: round2(sum(overdue)),
+        fees_total: round2(sum(fees, :amount)),
         next_due: next && %{id: next.id, due_date: next.due_date, total: next.total}
       },
       overdue: overdue,
@@ -91,8 +92,8 @@ defmodule Nexo.Billing.Payments do
       note = rest |> List.first() |> Normalize.text()
       {term, number} = term_and_number(text)
       credits = credit_extension(note)
-      amount = money(Normalize.number(amount) || 0.0)
-      late_fee = money(Normalize.number(late_fee) || 0.0)
+      amount = round2(Normalize.number(amount) || 0.0)
+      late_fee = round2(Normalize.number(late_fee) || 0.0)
 
       base = "#{term || "x"}-cuota-#{pad(number)}"
 
@@ -105,7 +106,7 @@ defmodule Nexo.Billing.Payments do
         due_date: Normalize.date(due),
         amount: amount,
         late_fee: late_fee,
-        total: money(Normalize.number(total) || amount + late_fee),
+        total: round2(Normalize.number(total) || amount + late_fee),
         note: credits || note
       }
     end
@@ -123,9 +124,9 @@ defmodule Nexo.Billing.Payments do
         term: nil,
         number: nil,
         due_date: nil,
-        amount: money(value),
+        amount: round2(value),
         late_fee: 0.0,
-        total: money(value),
+        total: round2(value),
         note: nil
       }
     end
@@ -136,7 +137,7 @@ defmodule Nexo.Billing.Payments do
   defp discount([date, description, amount | rest]) do
     with value when is_number(value) <- Normalize.number(amount) do
       label = Normalize.title(description) || "Descuento"
-      value = -abs(money(value))
+      value = -abs(round2(value))
 
       %{
         id: "discount-" <> slug("#{date}-#{label}"),
@@ -160,7 +161,7 @@ defmodule Nexo.Billing.Payments do
          value when is_number(value) <- Normalize.number(amount) do
       %{
         label: fee_label(text),
-        amount: money(value),
+        amount: round2(value),
         note: rest |> List.first() |> Normalize.text()
       }
     end
@@ -195,12 +196,11 @@ defmodule Nexo.Billing.Payments do
 
   defp credit_extension(note) do
     if note =~ ~r/AMP\.?\s*CRED/i do
-      case Regex.run(~r/(\d+)\s*cred[^\d]*([\d.]+)/i, note) do
-        [_, count, price] ->
-          "#{count} créditos × S/ #{:erlang.float_to_binary(money(Normalize.number(price)), decimals: 2)}"
-
-        _ ->
-          "Ampliación de créditos"
+      with [_, count, price] <- Regex.run(~r/(\d+)\s*cred[^\d]*([\d.]+)/i, note),
+           price when is_number(price) <- Normalize.number(price) do
+        "#{count} créditos × S/ #{:erlang.float_to_binary(round2(price), decimals: 2)}"
+      else
+        _ -> "Ampliación de créditos"
       end
     end
   end
@@ -238,19 +238,12 @@ defmodule Nexo.Billing.Payments do
 
   @doc "`{:ok, schedule, meta}` or an error."
   def schedule(subject) do
-    result =
-      Sessions.with_session(subject, :intranet, fn cookies ->
-        with {:ok, rows, cookies} <-
-               Intranet.get(
-                 cookies,
-                 "consultarCuotasEstudiante?installments=30",
-                 "pg_reportesDelEstudiante"
-               ) do
-          {:ok, rows, cookies}
-        end
-      end)
-
-    with {:ok, rows} <- result do
+    with {:ok, rows} <-
+           Sessions.intranet_get(
+             subject,
+             "consultarCuotasEstudiante?installments=30",
+             "pg_reportesDelEstudiante"
+           ) do
       term =
         case Terms.resolve(subject, nil) do
           {:ok, t} -> %{id: t.id, label: t.label}
@@ -267,14 +260,18 @@ defmodule Nexo.Billing.Payments do
       for [_, _, amount, number, due | _] <- rows,
           n = Normalize.int(number),
           is_integer(n),
-          do: %{number: n, amount: money(Normalize.number(amount)), due_date: Normalize.date(due)}
+          do: %{
+            number: n,
+            amount: round2(Normalize.number(amount)),
+            due_date: Normalize.date(due)
+          }
 
     first = List.first(rows) || []
 
     %{
       term: term,
       currency: @currency,
-      term_total: first |> Enum.at(1) |> Normalize.number() |> money(),
+      term_total: first |> Enum.at(1) |> Normalize.number() |> round2(),
       installments: Enum.sort_by(installments, & &1.number),
       generated_at: first |> Enum.at(6) |> datetime()
     }
@@ -286,15 +283,8 @@ defmodule Nexo.Billing.Payments do
   def history(subject, student) do
     form = %{"codEst" => to_string(student["code"])}
 
-    result =
-      Sessions.with_session(subject, :intranet, fn cookies ->
-        with {:ok, rows, cookies} <-
-               Intranet.post(cookies, "consultarUltimasOperaciones", form, @referer) do
-          {:ok, rows, cookies}
-        end
-      end)
-
-    with {:ok, rows} <- result do
+    with {:ok, rows} <-
+           Sessions.intranet_post(subject, "consultarUltimasOperaciones", form, @referer) do
       {:ok, %{currency: @currency, operations: build_history(rows(rows))}, %{source: "intranet"}}
     end
   end
@@ -314,7 +304,7 @@ defmodule Nexo.Billing.Payments do
         |> Enum.sort_by(&Normalize.int(Enum.at(&1, 3)))
         |> Enum.map(fn r ->
           concept = Normalize.text(Enum.at(r, 6))
-          amount = money(Normalize.number(Enum.at(r, 8)))
+          amount = round2(Normalize.number(Enum.at(r, 8)))
 
           %{
             concept: concept_label(concept),
@@ -331,7 +321,7 @@ defmodule Nexo.Billing.Payments do
         place: place(at.(11)),
         voucher: Enum.find_value(items, & &1.voucher),
         bank_reference: at.(9),
-        total: money(Enum.reduce(items, 0, &(&1.amount + &2))),
+        total: round2(Enum.reduce(items, 0, &((&1.amount || 0) + &2))),
         items: items
       }
     end)
@@ -370,13 +360,6 @@ defmodule Nexo.Billing.Payments do
   # Rows that hold data: lists, without `No hay datos` or `--` placeholders.
   defp rows(rows) do
     for r <- rows, is_list(r), r != [], Normalize.text(hd(r)) != nil, do: r
-  end
-
-  defp money(nil), do: nil
-  defp money(n), do: Float.round(n * 1.0, 2)
-
-  defp lima_today do
-    DateTime.utc_now() |> DateTime.add(-5 * 3600) |> DateTime.to_date()
   end
 
   @months ~w(jan feb mar apr may jun jul aug sep oct nov dec)

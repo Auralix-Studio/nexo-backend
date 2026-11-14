@@ -20,9 +20,15 @@ defmodule Nexo.Integrations.Tokens do
 
   @doc "A short code a person types into the app, e.g. `BDFG-KLMN`."
   def user_code do
-    chars = for _ <- 1..8, do: Enum.random(@user_alphabet)
+    chars = for _ <- 1..8, do: Enum.at(@user_alphabet, random_index())
     {left, right} = Enum.split(chars, 4)
     "#{left}-#{right}"
+  end
+
+  # Cryptographic and unbiased: bytes 240..255 would favour the first letters.
+  defp random_index do
+    <<byte>> = :crypto.strong_rand_bytes(1)
+    if byte < 240, do: rem(byte, 20), else: random_index()
   end
 
   @doc "Normalizes what a person typed: upper case, dash in the middle."

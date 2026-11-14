@@ -1,6 +1,10 @@
 defmodule Nexo.Web.Api.UpstreamReply do
   @moduledoc "Turns `{:ok, data, meta}` / `{:error, reason}` from upstream-backed modules into route replies."
 
+  @doc "Like `reply/1` for modules that answer `{:ok, data, sources}` (per-source status)."
+  def with_sources({:ok, data, sources}), do: reply({:ok, data, %{sources: sources}})
+  def with_sources(error), do: reply(error)
+
   def reply({:ok, data, meta}), do: {:ok, data, Map.put(meta, :fetched_at, DateTime.utc_now())}
 
   def reply({:error, :unknown_term}),

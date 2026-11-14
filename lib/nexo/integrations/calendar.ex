@@ -20,8 +20,6 @@ defmodule Nexo.Integrations.Calendar do
   @default_term_weeks 17
   @byday %{1 => "MO", 2 => "TU", 3 => "WE", 4 => "TH", 5 => "FR", 6 => "SA", 7 => "SU"}
 
-  def collection, do: @collection
-
   @doc "Creates or rotates the feed key. Returns the raw key, shown only once."
   def enable(student_id, meta \\ %{}) when is_binary(student_id) do
     key = Tokens.generate()

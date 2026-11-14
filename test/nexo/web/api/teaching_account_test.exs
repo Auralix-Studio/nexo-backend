@@ -18,15 +18,6 @@ defmodule Nexo.Web.Api.TeachingAccountTest do
     :ok
   end
 
-  defp logged_in(conn, user \\ "D001") do
-    body =
-      conn
-      |> post("/auth/login", %{"user" => user, "password" => "ok"})
-      |> json_response(200)
-
-    put_req_header(conn, "authorization", "Bearer " <> body["data"]["access_token"])
-  end
-
   defp section_id(conn) do
     conn
     |> get("/teaching/sections")

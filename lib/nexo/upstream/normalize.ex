@@ -64,6 +64,30 @@ defmodule Nexo.Upstream.Normalize do
     end
   end
 
+  @doc "Two decimals; whole numbers as integers (`3`, not `3.0`)."
+  def tidy(nil), do: nil
+  def tidy(n) when is_integer(n), do: n
+
+  def tidy(n) when is_float(n) do
+    r = Float.round(n, 2)
+    if r == trunc(r), do: trunc(r), else: r
+  end
+
+  @doc "A float with two decimals (money keeps its decimals: `522.0`)."
+  def round2(nil), do: nil
+  def round2(n), do: Float.round(n * 1.0, 2)
+
+  @doc "Today in Lima (UTC-5, no daylight saving)."
+  def lima_today, do: lima_now() |> NaiveDateTime.to_date()
+
+  @doc "Lima wall-clock time, to the second."
+  def lima_now do
+    DateTime.utc_now()
+    |> DateTime.add(-5 * 3600)
+    |> DateTime.truncate(:second)
+    |> DateTime.to_naive()
+  end
+
   @doc "Booleans as SIGMA and the Intranet spell them."
   def bool(true), do: true
   def bool(false), do: false

@@ -8,16 +8,11 @@ defmodule Nexo.Web.Api.Routes.Student.Profile do
     description: "The student's profile: career, campus, cycle, credits and cumulative average."
 
   alias Nexo.Academic.Profile
+  alias Nexo.Web.Api.UpstreamReply
 
   @impl true
   def handle(conn, _params) do
     %{record: student} = subject = conn.assigns.current_subject
-
-    case Profile.get(subject, student) do
-      {:ok, profile, sources} -> {:ok, profile, meta(sources)}
-      {:error, :reauth_required} -> {:error, :reauth_required}
-    end
+    subject |> Profile.get(student) |> UpstreamReply.with_sources()
   end
-
-  defp meta(sources), do: %{sources: sources, fetched_at: DateTime.utc_now()}
 end

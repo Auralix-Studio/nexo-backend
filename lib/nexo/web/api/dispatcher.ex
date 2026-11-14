@@ -247,9 +247,17 @@ defmodule Nexo.Web.Api.Dispatcher do
     end
   rescue
     exception ->
+      # Arities only: a frame's arguments could hold a password or a token.
+      stacktrace =
+        Enum.map(__STACKTRACE__, fn
+          {m, f, args, location} when is_list(args) -> {m, f, length(args), location}
+          frame -> frame
+        end)
+
       Logger.error(
         "API route #{spec.name} crashed: " <>
-          Exception.format(:error, exception, __STACKTRACE__)
+          Exception.format_banner(:error, exception, stacktrace) <>
+          "\n" <> Exception.format_stacktrace(stacktrace)
       )
 
       Response.error(conn, :internal_error)

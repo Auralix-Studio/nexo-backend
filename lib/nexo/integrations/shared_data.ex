@@ -27,8 +27,6 @@ defmodule Nexo.Integrations.SharedData do
   @profile_fields ~w(code name first_name last_name career faculty cycle)
   @class_text ~w(course section room teacher modality)
 
-  def collection, do: @collection
-
   @doc "Validates and stores the shared data. Returns `{:error, details}` when invalid."
   def put(student_id, payload) when is_binary(student_id) and is_map(payload) do
     with {:ok, profile} <- normalize_profile(payload["profile"]),

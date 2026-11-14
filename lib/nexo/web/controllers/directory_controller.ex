@@ -1,19 +1,16 @@
 defmodule Nexo.Web.DirectoryController do
+  @moduledoc "Legacy student directory, its access grants and guardian links (`/api/v1/directory`)."
   use Nexo.Web, :controller
 
   alias Nexo.Academic.Directory
-
   alias Nexo.Access.DirectoryAccess
-
+  alias Nexo.People.Guardians
   alias Nexo.Security.Audit
+  alias Nexo.Web.ClientIp
 
-  @doc """
-  Si esta cuenta puede entrar al directorio. La app lo consulta al arrancar
-  para decidir si muestra el apartado: es la única pregunta que el backend
-  contesta sin exigir acceso previo.
-  """
+  @doc "Whether this account may open the directory; the app asks on start."
   def access(conn, _params) do
-    actor = actor(conn)
+    actor = conn.assigns.current_actor
     role = DirectoryAccess.role(actor.code)
 
     json(conn, %{
@@ -42,33 +39,31 @@ defmodule Nexo.Web.DirectoryController do
     })
   end
 
-  def schools(conn, _params) do
-    json(conn, %{escuelas: Directory.schools()})
-  end
+  def schools(conn, _params), do: json(conn, %{escuelas: Directory.schools()})
 
-  def show(conn, %{"codigo" => codigo}) do
-    case Directory.get(codigo) do
+  def show(conn, %{"codigo" => code}) do
+    case Directory.get(code) do
       nil ->
         conn |> put_status(:not_found) |> json(%{error: "no_encontrado"})
 
       record ->
-        actor = actor(conn)
+        actor = conn.assigns.current_actor
 
-        # Abrir la ficha de una persona se audita nominalmente: es el acceso
-        # que hay que poder justificar después.
+        # Opening a person's record is audited by name: it is the access that
+        # has to be justified later.
         Audit.log(:directory_record_read, %{
           actor_type: to_string(actor.type),
           actor_id: actor.code,
-          student_code: codigo,
+          student_code: code,
           detail: %{rol: to_string(conn.assigns[:directory_role])},
-          ip: client_ip(conn)
+          ip: ClientIp.get(conn)
         })
 
         json(conn, %{estudiante: record_view(record)})
     end
   end
 
-  # --- Administración del acceso -------------------------------------------
+  # --- Access administration -------------------------------------------------
 
   def grants(conn, _params) do
     json(conn, %{
@@ -77,77 +72,43 @@ defmodule Nexo.Web.DirectoryController do
     })
   end
 
-  def set_grant(conn, %{"codigo" => codigo} = params) do
-    estado = params["estado"] || "activo"
-    actor = actor(conn)
-
-    case DirectoryAccess.set_status(codigo, estado, actor.code,
+  def set_grant(conn, %{"codigo" => code} = params) do
+    case DirectoryAccess.set_status(code, params["estado"] || "activo", actor(conn),
            note: params["nota"],
-           ip: client_ip(conn)
+           ip: ClientIp.get(conn)
          ) do
-      {:ok, grant} ->
-        json(conn, %{acceso: grant_view(grant)})
-
-      {:error, :invalid_status} ->
-        conn |> put_status(:unprocessable_entity) |> json(%{error: "estado_invalido"})
+      {:ok, grant} -> json(conn, %{acceso: grant_view(grant)})
+      {:error, :invalid_status} -> unprocessable(conn, "estado_invalido")
     end
   end
 
-  def set_grant(conn, _params) do
-    conn |> put_status(:bad_request) |> json(%{error: "parametros_invalidos"})
-  end
-
-  # --- Apoderados (administración) -----------------------------------------
+  # --- Guardians (administration) ---------------------------------------------
 
   def guardians(conn, _params) do
-    json(conn, %{apoderados: Enum.map(Nexo.People.Guardians.list(), &guardian_view/1)})
+    json(conn, %{apoderados: Enum.map(Guardians.list(), &guardian_view/1)})
   end
 
   @doc """
-  Vincula (o actualiza) a un apoderado con sus estudiantes.
-
-  El PIN generado se devuelve **una sola vez**, aquí: no se guarda en claro en
-  ninguna parte, así que si se pierde hay que restablecerlo.
+  Links (or updates) a guardian with their students. A new PIN is returned
+  **only here, once**: it is not stored in clear anywhere.
   """
   def set_guardian(conn, %{"dni" => dni} = params) do
-    actor = actor(conn).code
+    opts = [actor: actor(conn), ip: ClientIp.get(conn)]
 
     if params["estado"] == "revocado" do
-      {:ok, guardian} = Nexo.People.Guardians.revoke(dni, actor: actor, ip: client_ip(conn))
+      {:ok, guardian} = Guardians.revoke(dni, opts)
       json(conn, %{apoderado: guardian_view(guardian)})
     else
-      case Nexo.People.Guardians.link(dni, params["estudiantes"] || [],
-             name: params["nombre"],
-             reset_pin: params["nuevo_pin"] == true,
-             actor: actor,
-             ip: client_ip(conn)
-           ) do
-        {:ok, guardian, pin} ->
-          json(conn, %{apoderado: guardian_view(guardian), pin: pin})
+      opts = opts ++ [name: params["nombre"], reset_pin: params["nuevo_pin"] == true]
 
-        {:error, :invalid_dni} ->
-          conn |> put_status(:unprocessable_entity) |> json(%{error: "dni_invalido"})
+      case Guardians.link(dni, params["estudiantes"] || [], opts) do
+        {:ok, guardian, pin} -> json(conn, %{apoderado: guardian_view(guardian), pin: pin})
+        {:error, :invalid_dni} -> unprocessable(conn, "dni_invalido")
       end
     end
   end
 
-  def set_guardian(conn, _params) do
-    conn |> put_status(:bad_request) |> json(%{error: "parametros_invalidos"})
-  end
-
-  defp guardian_view(g) do
-    %{
-      dni: g["dni"],
-      nombre: g["name"],
-      estudiantes: g["students"] || [],
-      estado: g["status"],
-      bloqueado: Nexo.People.Guardians.locked?(g),
-      ultimo_acceso: g["last_access_at"],
-      actualizado_en: g["updated_at"]
-    }
-  end
-
-  # --- Vistas ---------------------------------------------------------------
+  # --- Views -----------------------------------------------------------------
 
   def summary_view(s) do
     %{
@@ -191,9 +152,24 @@ defmodule Nexo.Web.DirectoryController do
     }
   end
 
-  defp actor(conn), do: conn.assigns.current_actor
+  defp guardian_view(g) do
+    %{
+      dni: g["dni"],
+      nombre: g["name"],
+      estudiantes: g["students"] || [],
+      estado: g["status"],
+      bloqueado: Guardians.locked?(g),
+      ultimo_acceso: g["last_access_at"],
+      actualizado_en: g["updated_at"]
+    }
+  end
 
-  defp to_int(nil), do: nil
+  defp actor(conn), do: conn.assigns.current_actor.code
+
+  defp unprocessable(conn, error),
+    do: conn |> put_status(:unprocessable_entity) |> json(%{error: error})
+
+  defp to_int(value) when is_integer(value), do: value
 
   defp to_int(value) when is_binary(value) do
     case Integer.parse(value) do
@@ -202,7 +178,5 @@ defmodule Nexo.Web.DirectoryController do
     end
   end
 
-  defp to_int(value) when is_integer(value), do: value
-
-  defp client_ip(conn), do: conn.remote_ip |> :inet.ntoa() |> to_string()
+  defp to_int(_), do: nil
 end

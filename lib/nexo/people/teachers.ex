@@ -1,17 +1,14 @@
 defmodule Nexo.People.Teachers do
   @moduledoc """
-  Docentes y su estado en la allowlist (colección `teachers`).
+  Teachers (collection `teachers`), created on their first login.
 
-  Ser docente UPLA no basta: el registro nace `"pendiente"` y solo un admin lo
-  pasa a `"autorizado"`. El scoping por sección/alumno se valida en cada
-  consulta (fase 2), no aquí.
+  A record starts `"pendiente"`, or `"autorizado"` when its code is listed in
+  `AUTHORIZED_TEACHERS`; the status is shown in `GET /me`. Section scoping is
+  checked on every request (`Nexo.Teaching.Sections`), not here.
   """
   alias Nexo.Infra.Db
 
   @collection "teachers"
-  @statuses ~w(pendiente autorizado suspendido)
-
-  def valid_statuses, do: @statuses
 
   def get_teacher(id) when is_binary(id) do
     case Db.parse_id(id) do
@@ -24,19 +21,7 @@ defmodule Nexo.People.Teachers do
     Mongo.find_one(Db.conn(), @collection, %{sigma_code: sigma_code})
   end
 
-  def list_teachers do
-    Db.conn()
-    |> Mongo.find(@collection, %{}, sort: %{inserted_at: -1})
-    |> Enum.to_list()
-  end
-
-  @doc """
-  Documentos (DNI o código SIGMA) que quedan autorizados sin aprobación manual.
-
-  Se configuran con `AUTHORIZED_TEACHERS` (separados por coma) y no se
-  versionan: son datos personales y no tienen por qué vivir en el repositorio.
-  Sirve para arrancar el piloto sin tener que aprobarse uno mismo a mano.
-  """
+  @doc "Codes (DNI or SIGMA code) authorized without approval: `AUTHORIZED_TEACHERS`, comma separated."
   def preauthorized_codes do
     :nexo
     |> Application.get_env(:authorized_teachers, "")
@@ -49,9 +34,8 @@ defmodule Nexo.People.Teachers do
   def preauthorized?(code), do: code in preauthorized_codes()
 
   @doc """
-  Login docente: primer acceso registra al docente como `"pendiente"`; accesos
-  siguientes refrescan el nombre si SIGMA lo trae más completo. Los documentos
-  preautorizados entran directamente como `"autorizado"`.
+  Registers the teacher on the first login (`"pendiente"`, or `"autorizado"`
+  when preauthorized); later logins refresh the name when SIGMA sends one.
   """
   def upsert_teacher_from_sigma(%{code: code} = profile) do
     now = Db.now()
@@ -81,9 +65,7 @@ defmodule Nexo.People.Teachers do
           "updated_at" => now
         }
 
-        # La preautorización solo promueve a quien sigue esperando aprobación:
-        # a un docente suspendido lo dejó así un administrador y no se revierte
-        # por estar en la lista.
+        # Preauthorization only promotes a pending teacher, never a suspended one.
         updates =
           if preauthorized and teacher["status"] == "pendiente" do
             Map.merge(updates, %{
@@ -97,45 +79,6 @@ defmodule Nexo.People.Teachers do
 
         apply_updates(teacher, updates)
     end
-  end
-
-  def set_teacher_status(%{} = teacher, status, authorized_by) when status in @statuses do
-    apply_updates(teacher, %{
-      "status" => status,
-      "authorized_by" => authorized_by,
-      "authorized_at" => if(status == "autorizado", do: Db.now(), else: teacher["authorized_at"]),
-      "updated_at" => Db.now()
-    })
-  end
-
-  def set_teacher_status(_teacher, _status, _by), do: {:error, :invalid_status}
-
-  @doc """
-  Guarda el token de sesión de SIGMA obtenido en el login, cifrado en reposo.
-  No es una credencial (la contraseña nunca se guarda), pero permite consultar
-  en nombre del docente, así que no vive en claro.
-  """
-  def put_sigma_token(%{} = teacher, token) when is_binary(token) and token != "" do
-    apply_updates(teacher, %{
-      "sigma_token" => %BSON.Binary{binary: Nexo.Security.Vault.encrypt(token)},
-      "sigma_token_at" => Db.now(),
-      "updated_at" => Db.now()
-    })
-  end
-
-  def put_sigma_token(teacher, _token), do: {:ok, teacher}
-
-  @doc "Token de SIGMA descifrado, o `:error` si no hay o no se puede leer."
-  def sigma_token(%{"sigma_token" => %BSON.Binary{binary: data}}),
-    do: Nexo.Security.Vault.decrypt(data)
-
-  def sigma_token(_), do: :error
-
-  @doc "Olvida el token de SIGMA (caducó o el docente cerró sesión)."
-  def clear_sigma_token(%{"_id" => id}) do
-    Mongo.update_one(Db.conn(), @collection, %{_id: id}, %{
-      "$unset" => %{"sigma_token" => "", "sigma_token_at" => ""}
-    })
   end
 
   defp apply_updates(%{"_id" => id} = teacher, updates) do

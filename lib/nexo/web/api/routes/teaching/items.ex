@@ -8,7 +8,7 @@ defmodule Nexo.Web.Api.Routes.Teaching.Items do
 
   @doc "`from`/`to` as ISO dates, defaulting to the last `days` days in Lima."
   def range(params, days) do
-    today = DateTime.utc_now() |> DateTime.add(-5 * 3600) |> DateTime.to_date()
+    today = Nexo.Upstream.Normalize.lima_today()
     to = params[:to] || Date.to_iso8601(today)
     from = params[:from] || today |> Date.add(-days) |> Date.to_iso8601()
     {from, to}

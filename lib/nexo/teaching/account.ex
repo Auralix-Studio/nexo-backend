@@ -49,17 +49,9 @@ defmodule Nexo.Teaching.Account do
     if sigma do
       {:ok, %{now: sigma <> "-05:00"}, %{source: "sigma"}}
     else
-      {:ok, %{now: lima_now()}, %{source: "server"}}
+      {:ok, %{now: NaiveDateTime.to_iso8601(Normalize.lima_now()) <> "-05:00"},
+       %{source: "server"}}
     end
-  end
-
-  defp lima_now do
-    DateTime.utc_now()
-    |> DateTime.add(-5 * 3600)
-    |> DateTime.truncate(:second)
-    |> DateTime.to_naive()
-    |> NaiveDateTime.to_iso8601()
-    |> Kernel.<>("-05:00")
   end
 
   @doc """
@@ -80,10 +72,8 @@ defmodule Nexo.Teaching.Account do
 
       result =
         Sessions.with_session(subject, :sigma, fn token ->
-          case Sigma.download(token, "/Docente/GetReporteAuxiliar", query) do
-            {:ok, file} -> {:ok, file, token}
-            error -> error
-          end
+          with {:ok, file} <- Sigma.download(token, "/Docente/GetReporteAuxiliar", query),
+               do: {:ok, file, token}
         end)
 
       with {:ok, file} <- result do

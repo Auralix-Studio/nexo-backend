@@ -8,7 +8,6 @@ defmodule Nexo.Campus.Wifi do
   global `cache-control: no-store` header. Upstream key names are not
   confirmed by a captured sample, so the known variants are accepted.
   """
-  alias Nexo.Sigma
   alias Nexo.Upstream.{Normalize, Sessions}
 
   @user_keys ~w(usuario user usuarioWifi username)
@@ -16,14 +15,7 @@ defmodule Nexo.Campus.Wifi do
 
   @doc "`{:ok, %{user, password}, meta}` or `{:error, :reauth_required | :unavailable}`."
   def get(subject) do
-    result =
-      Sessions.with_session(subject, :sigma, fn token ->
-        with {:ok, data} <- Sigma.fetch(token, "/Recursos/ObtenerWifiUsuario") do
-          {:ok, data, token}
-        end
-      end)
-
-    with {:ok, data} <- result do
+    with {:ok, data} <- Sessions.sigma_fetch(subject, "/Recursos/ObtenerWifiUsuario") do
       {:ok, build(data), %{source: "sigma"}}
     end
   end
