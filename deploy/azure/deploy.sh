@@ -13,6 +13,9 @@ cd "$(dirname "$0")/../.."
 
 RG="${RG:-Nexo}"
 LOCATION="${LOCATION:-chilecentral}"
+# ACR Tasks (az acr build) is not offered in chilecentral, and the student
+# subscription only allows a few regions: the registry lives in canadacentral.
+ACR_LOCATION="${ACR_LOCATION:-canadacentral}"
 ENV_NAME="${ENV_NAME:-nexo-env}"
 APP="${APP:-nexo-api}"
 DOMAIN="${DOMAIN:-api.nexo.aurx.pro}"
@@ -31,7 +34,7 @@ az account show -o none 2>/dev/null || fail "Not signed in. Run: az login"
 az extension add --name containerapp --upgrade -y -o none 2>/dev/null || true
 
 # A globally unique registry name derived from the subscription.
-ACR="${ACR:-nexo$(az account show --query id -o tsv | tr -d '-' | cut -c1-10)}"
+ACR="${ACR:-nexo$(az account show --query id -o tsv | tr -d '-' | cut -c1-10)ca}"
 REGISTRY="$ACR.azurecr.io"
 
 app_exists() { az containerapp show -g "$RG" -n "$APP" -o none 2>/dev/null; }
@@ -68,7 +71,7 @@ deploy() {
 
   say "Container registry $ACR"
   az acr show -n "$ACR" -o none 2>/dev/null ||
-    az acr create -g "$RG" -n "$ACR" -l "$LOCATION" --sku Basic --admin-enabled false -o none
+    az acr create -g "$RG" -n "$ACR" -l "$ACR_LOCATION" --sku Basic --admin-enabled false -o none
 
   local tag
   tag="$(git rev-parse --short HEAD)"
