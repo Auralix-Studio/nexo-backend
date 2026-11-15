@@ -90,14 +90,13 @@ defmodule Nexo.Upstream.Intranet.Http do
       url: "#{@base}/#{path}",
       headers: headers,
       redirect: false,
-      decode_body: false,
-      retry: false,
-      receive_timeout: 30_000
+      decode_body: false
     ]
 
     opts = if form, do: Keyword.put(opts, :form, form), else: opts
 
-    case Req.request(opts) do
+    # Rate limit, circuit breaker, dedicated pool, timeout within the budget.
+    case Nexo.Upstream.Guard.run(:intranet, &Req.request(Keyword.merge(opts, &1))) do
       {:ok, res} -> {:ok, res}
       {:error, _} -> {:error, :unavailable}
     end

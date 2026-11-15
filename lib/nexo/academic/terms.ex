@@ -7,7 +7,11 @@ defmodule Nexo.Academic.Terms do
   row). Labels differ too (`"2026 - 1"`, `"2025 - II"`). The result is one
   list, newest first, with ids like `"2026-1"` and labels like `"2026-I"`.
   """
+  alias Nexo.Infra.Cache
   alias Nexo.Upstream.{Normalize, Sessions}
+
+  # Terms change once a semester; most routes resolve one first.
+  @ttl :timer.hours(6)
 
   @type term_info :: %{
           id: String.t(),
@@ -17,8 +21,18 @@ defmodule Nexo.Academic.Terms do
           active: boolean()
         }
 
-  @doc "Terms plus the status of each source. `{:error, :reauth_required}` if none answered."
+  @doc """
+  Terms plus the status of each source. `{:error, :reauth_required}` if none
+  answered. Cached #{div(@ttl, 3_600_000)} h per user when both sources answered.
+  """
   def list(subject) do
+    Cache.subject(subject, :terms, fn -> fetch(subject) end,
+      ttl: @ttl,
+      cache_if: &Cache.sources_ok?/1
+    )
+  end
+
+  defp fetch(subject) do
     sigma = from_sigma(subject)
     intranet = from_intranet(subject)
 

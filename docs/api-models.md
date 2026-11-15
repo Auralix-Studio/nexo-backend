@@ -43,6 +43,55 @@ Upstream ids needed to write back to SIGMA (`cleAuto`, attendance id lists,
 `matricula_asignatura_id`, `cod_cursal`, `plan`, `tipoCalif`, `idNota`…)
 stay in the backend. The app addresses everything by Nexo ids.
 
+### Server cache and freshness
+
+Every upstream-backed route answers `meta.cached` and `meta.fetched_at`:
+
+* `cached: false` — read from the university for this request (or for a
+  request of the same user that was already in flight: identical concurrent
+  requests share one upstream read);
+* `cached: true` — served from the server's per-user cache;
+* `fetched_at` — when the data was read from the university, in both cases.
+
+| Data | Cached per user for |
+| --- | --- |
+| `/terms` | 6 h |
+| `/profile` | 1 h |
+| `/schedule` | 1 h (per term) |
+| `/curriculum` | 6 h |
+| `/grades`, `/grades/{term}/courses/{id}` | 5 min for the active term, 24 h for closed terms |
+| `/grades/summary` | 5 min (reuses the cached profile and grades) |
+| `/payments`, `/payments/schedule`, `/payments/history` | 15 min |
+| `/languages` | 1 h |
+| `/publications` | 15 min, one copy for every student |
+| `/teaching/sections` | 5 min |
+| `/teaching/sections/{id}/students`, `…/attendance` | 3 min; the teacher's own writes drop them |
+
+Only complete answers are cached (every `meta.sources` entry `ok`). When
+the university fails, the last good answer is served for up to one more
+hour, with `cached: true` and its original `fetched_at`; a dead university
+session (`401 reauth_required`) is never hidden. Logging in again or out
+drops the user's cache. Grades a teacher saves through Nexo drop the
+affected students' cached grades.
+
+### Rate limits
+
+| Limit | Value | Keyed by |
+| --- | --- | --- |
+| Every request, before routing | 3000/min | client IP (a campus shares one NAT IP) |
+| Authenticated routes | 120/min | user |
+| Public routes (`/status`, `/legal`, `/auth/*`, `/oauth/*`…) | 600/min | client IP |
+| `POST /auth/login` | 10 per 10 min, plus 600 per 10 min per IP | the `user` param |
+| `POST /auth/refresh` | 600 per 10 min | client IP |
+| `GET /health` (infrastructure probe) | 120/min | client IP |
+
+Over a limit: `429 rate_limited` with `Retry-After` (seconds). `/status`
+needs no App Check token and touches neither Mongo nor the university.
+
+A request is given at most 20 s on the server (the app waits 25 s); past
+that, or while the university is failing repeatedly, upstream routes answer
+`503 upstream_unavailable` at once instead of waiting.
+
 ## 2. Endpoints
 
 | Route | Model | Upstream today | Replaces in the app |

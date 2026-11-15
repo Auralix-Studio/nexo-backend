@@ -5,10 +5,21 @@ defmodule Nexo.Campus.Publications do
   `"1080x1080"` dimension becomes `width`/`height`, and entries without an
   image or video URL are dropped.
   """
+  alias Nexo.Infra.Cache
   alias Nexo.Upstream.{Normalize, Sessions}
 
-  @doc "`{:ok, publications, meta}` or `{:error, :reauth_required | :unavailable}`."
+  @ttl :timer.minutes(15)
+
+  @doc """
+  `{:ok, publications, meta}` or `{:error, :reauth_required | :unavailable}`.
+  The same for every student: cached 15 min for all of them (any student's
+  session can read them).
+  """
   def list(subject) do
+    Cache.shared(:publications, fn -> fetch(subject) end, ttl: @ttl)
+  end
+
+  defp fetch(subject) do
     with {:ok, data} <- Sessions.sigma_fetch(subject, "/Recursos/ListarPublicaciones") do
       items = for row <- List.wrap(data), is_map(row), item = build(row), do: item
       {:ok, items, %{source: "sigma"}}

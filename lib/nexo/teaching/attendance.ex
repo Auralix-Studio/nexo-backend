@@ -11,9 +11,11 @@ defmodule Nexo.Teaching.Attendance do
   date format with unpadded time. Suspended students are always recorded as
   suspended. Units SIGMA hides on its attendance screen are filtered.
   """
+  alias Nexo.Infra.Cache
   alias Nexo.Teaching.{Gradebook, Sections, Upstream}
   alias Nexo.Upstream.Normalize
 
+  @read_ttl :timer.minutes(3)
   @hidden_units [212, 214, 215, 115, 116]
   @risk_percent 70
   @states %{0 => "none", 1 => "present", 2 => "absent", 3 => "justified", 4 => "suspended"}
@@ -24,25 +26,37 @@ defmodule Nexo.Teaching.Attendance do
 
   # --- Sheet ----------------------------------------------------------------------------
 
-  @doc "`{:ok, sheet, meta}` or an error."
+  @doc """
+  `{:ok, sheet, meta}` or an error. Marks and units are cached
+  #{div(@read_ttl, 60_000)} min per teacher and section (dropped by the
+  teacher's writes); SIGMA's clock is read every time.
+  """
   def sheet(subject, section_id) do
     with {:ok, section} <- Sections.resolve(subject, section_id),
-         {:ok, {units, time, rows}} <-
-           Upstream.session(subject, fn get, _post ->
-             with {:ok, rows} <- get.("/Docente/GetAsistencia", sheet_query(section)) do
-               units =
-                 case get.("/Asignatura/getTipoUnidadesV2", units_query(section)) do
-                   {:ok, units} -> units(units)
-                   _ -> []
-                 end
-
-               {:ok, {units, server_time(get), Upstream.maps(rows)}}
-             end
-           end) do
+         {:ok, {units, rows, _complete?}} <-
+           Cache.subject(
+             subject,
+             {:attendance, section.id},
+             fn -> fetch_sheet(subject, section) end,
+             ttl: @read_ttl,
+             cache_if: &match?({:ok, {_, _, true}}, &1)
+           ) do
+      time = server_time(&Upstream.get(subject, &1, &2))
       Upstream.audit(subject, :section_attendance_read, %{section: section.id})
 
       {:ok, build(section.id, units, time, rows), %{source: "sigma"}}
     end
+  end
+
+  defp fetch_sheet(subject, section) do
+    Upstream.session(subject, fn get, _post ->
+      with {:ok, rows} <- get.("/Docente/GetAsistencia", sheet_query(section)) do
+        case get.("/Asignatura/getTipoUnidadesV2", units_query(section)) do
+          {:ok, units} -> {:ok, {units(units), Upstream.maps(rows), true}}
+          _ -> {:ok, {[], Upstream.maps(rows), false}}
+        end
+      end
+    end)
   end
 
   @doc false
@@ -168,76 +182,60 @@ defmodule Nexo.Teaching.Attendance do
   def take(subject, section_id, %{unit_id: unit_id, marks: marks}) do
     with {:ok, section} <- Sections.resolve(subject, section_id),
          {:ok, result} <-
-           Upstream.session(subject, fn get, post ->
-             with {:ok, rows} <- get.("/Docente/GetAsistencia", sheet_query(section)),
-                  {:ok, units} <- get.("/Asignatura/getTipoUnidadesV2", units_query(section)),
-                  :ok <- known_unit(units(units), unit_id),
-                  {:ok, now} <- clock(get) do
-               by_code = by_code(rows)
-
-               {failed, ok} =
-                 Enum.split_with(
-                   Enum.map(marks, &take_mark(&1, by_code, unit_id)),
-                   &match?({:failed, _}, &1)
-                 )
-
-               body = %{
-                 "fecha_asistencia" => upstream_time(now),
-                 "asistencia" => for({:ok, row} <- ok, do: row)
-               }
-
-               saved =
-                 if ok == [],
-                   do: {:ok, 0},
-                   else:
-                     post_result(
-                       post.("/Docente/InsertaRegistroAsistencia", %{}, body),
-                       length(ok)
-                     )
-
-               with {:ok, saved} <- saved do
-                 {:ok,
-                  %{
-                    session: session_id(upstream_time(now)),
-                    saved: saved,
-                    failed: for({:failed, f} <- failed, do: f)
-                  }}
-               end
-             end
+           Sections.written(subject, section, fn ->
+             take_marks(subject, section, unit_id, marks)
            end) do
       audit(subject, :section_attendance_taken, section, %{unit: unit_id, saved: result.saved})
       {:ok, result, %{source: "sigma"}}
     end
   end
 
+  defp take_marks(subject, section, unit_id, marks) do
+    Upstream.session(subject, fn get, post ->
+      with {:ok, rows} <- get.("/Docente/GetAsistencia", sheet_query(section)),
+           {:ok, units} <- get.("/Asignatura/getTipoUnidadesV2", units_query(section)),
+           :ok <- known_unit(units(units), unit_id),
+           {:ok, now} <- clock(get) do
+        by_code = by_code(rows)
+
+        {failed, ok} =
+          Enum.split_with(
+            Enum.map(marks, &take_mark(&1, by_code, unit_id)),
+            &match?({:failed, _}, &1)
+          )
+
+        body = %{
+          "fecha_asistencia" => upstream_time(now),
+          "asistencia" => for({:ok, row} <- ok, do: row)
+        }
+
+        saved =
+          if ok == [],
+            do: {:ok, 0},
+            else:
+              post_result(
+                post.("/Docente/InsertaRegistroAsistencia", %{}, body),
+                length(ok)
+              )
+
+        with {:ok, saved} <- saved do
+          {:ok,
+           %{
+             session: session_id(upstream_time(now)),
+             saved: saved,
+             failed: for({:failed, f} <- failed, do: f)
+           }}
+        end
+      end
+    end)
+  end
+
   @doc "Corrects marks of an existing session: `{:ok, %{saved, failed}, meta}`."
   def correct(subject, section_id, session, %{marks: marks}) do
     with {:ok, section} <- Sections.resolve(subject, section_id),
          {:ok, result} <-
-           Upstream.session(subject, fn get, post ->
-             with {:ok, rows} <- get.("/Docente/GetAsistencia", sheet_query(section)) do
-               by_code = by_code(rows)
-
-               {failed, ok} =
-                 marks
-                 |> Enum.map(&correct_mark(&1, by_code, session))
-                 |> Enum.split_with(&match?({:failed, _}, &1))
-
-               saved =
-                 if ok == [],
-                   do: {:ok, 0},
-                   else:
-                     post_result(
-                       post.("/Docente/ActualizarRegistroAsistencia", %{}, %{
-                         "asistencia" => for({:ok, row} <- ok, do: row)
-                       }),
-                       length(ok)
-                     )
-
-               with {:ok, saved} <- saved do
-                 {:ok, %{saved: saved, failed: for({:failed, f} <- failed, do: f)}}
-               end
-             end
+           Sections.written(subject, section, fn ->
+             correct_marks(subject, section, session, marks)
            end) do
       audit(subject, :section_attendance_corrected, section, %{
         session: session,
@@ -246,6 +244,34 @@ defmodule Nexo.Teaching.Attendance do
 
       {:ok, result, %{source: "sigma"}}
     end
+  end
+
+  defp correct_marks(subject, section, session, marks) do
+    Upstream.session(subject, fn get, post ->
+      with {:ok, rows} <- get.("/Docente/GetAsistencia", sheet_query(section)) do
+        by_code = by_code(rows)
+
+        {failed, ok} =
+          marks
+          |> Enum.map(&correct_mark(&1, by_code, session))
+          |> Enum.split_with(&match?({:failed, _}, &1))
+
+        saved =
+          if ok == [],
+            do: {:ok, 0},
+            else:
+              post_result(
+                post.("/Docente/ActualizarRegistroAsistencia", %{}, %{
+                  "asistencia" => for({:ok, row} <- ok, do: row)
+                }),
+                length(ok)
+              )
+
+        with {:ok, saved} <- saved do
+          {:ok, %{saved: saved, failed: for({:failed, f} <- failed, do: f)}}
+        end
+      end
+    end)
   end
 
   defp by_code(rows) do

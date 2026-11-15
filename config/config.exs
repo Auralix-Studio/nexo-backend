@@ -45,9 +45,27 @@ config :nexo, :app_check,
   app_ids: [],
   jwks_url: "https://firebaseappcheck.googleapis.com/v1/jwks"
 
+# Inbound limits. A whole campus reaches the API from one NAT IP, so the
+# per-IP limits are high and the real ones are per user (`subject_per_minute`)
+# and, for the login, per `user` param (see `Nexo.Web.Api.Dispatcher`).
 config :nexo, :rate_limits,
-  ip_per_minute: 300,
-  subject_per_minute: 120
+  ip_per_minute: 3000,
+  subject_per_minute: 120,
+  public_ip_per_minute: 600
+
+# Time budget of one API request, below the app's 25 s timeout.
+config :nexo, :request_deadline_ms, 20_000
+
+# Outbound protection for the university, per host and replica (see
+# `Nexo.Upstream.Guard`).
+config :nexo, :upstream_guard,
+  rate_per_second: 25,
+  max_wait_ms: 2_000,
+  failure_threshold: 8,
+  open_ms: 30_000,
+  call_timeout_ms: 10_000,
+  pool_timeout_ms: 2_000,
+  pool_size: 25
 
 # Peers allowed to report the client IP (the Cloudflare tunnel runs on the
 # same host).

@@ -6,7 +6,7 @@ defmodule Nexo.People.Teachers do
   `AUTHORIZED_TEACHERS`; the status is shown in `GET /me`. Section scoping is
   checked on every request (`Nexo.Teaching.Sections`), not here.
   """
-  alias Nexo.Infra.Db
+  alias Nexo.Infra.{Cache, Db}
 
   @collection "teachers"
 
@@ -84,6 +84,7 @@ defmodule Nexo.People.Teachers do
   defp apply_updates(%{"_id" => id} = teacher, updates) do
     with {:ok, _} <-
            Mongo.update_one(Db.conn(), @collection, %{_id: id}, %{"$set" => updates}) do
+      Cache.forget_subject_record(:teacher, Db.id_to_string(id))
       {:ok, Map.merge(teacher, updates)}
     end
   end

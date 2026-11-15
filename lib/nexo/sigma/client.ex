@@ -15,7 +15,7 @@ defmodule Nexo.Sigma.Client do
   def verify_login(user, password) do
     body = %{"usuarioId" => user, "clave" => Base.encode64(password), "nomSys" => "SIGMA"}
 
-    case Req.post(req(), url: "/Login/SesionV1", json: body) do
+    case guarded(&Req.post(&1, url: "/Login/SesionV1", json: body)) do
       {:ok, %Req.Response{status: 200, body: %{"success" => true, "data" => data}}}
       when is_map(data) ->
         info = data["info"] || %{}
@@ -44,7 +44,7 @@ defmodule Nexo.Sigma.Client do
 
   @impl true
   def fetch(token, path) do
-    case Req.get(req(), url: path, auth: {:bearer, token}) do
+    case guarded(&Req.get(&1, url: path, auth: {:bearer, token})) do
       {:ok, %Req.Response{status: 200, body: %{} = body}} -> {:ok, body["data"]}
       other -> failure(other)
     end
@@ -55,7 +55,7 @@ defmodule Nexo.Sigma.Client do
     opts = [method: method, url: path, params: Map.to_list(query), auth: {:bearer, token}]
     opts = if body, do: Keyword.put(opts, :json, body), else: opts
 
-    case Req.request(req(), opts) do
+    case guarded(&Req.request(&1, opts)) do
       # SIGMA reports a rejected write as `success: false` (sometimes with 400).
       {:ok, %Req.Response{status: status, body: %{} = body}} when status in [200, 201, 400] ->
         {:ok, %{success: body["success"] != false, data: body["data"], message: body["mensaje"]}}
@@ -69,7 +69,7 @@ defmodule Nexo.Sigma.Client do
   def download(token, path, query) do
     opts = [url: path, params: Map.to_list(query), auth: {:bearer, token}, decode_body: false]
 
-    case Req.get(req(), opts) do
+    case guarded(&Req.get(&1, opts)) do
       {:ok, %Req.Response{status: 200, body: body} = res} when is_binary(body) and body != "" ->
         type = res |> Req.Response.get_header("content-type") |> List.first()
 
@@ -110,12 +110,17 @@ defmodule Nexo.Sigma.Client do
   defp truthy?(v) when is_binary(v), do: String.downcase(v) in ["true", "1", "s"]
   defp truthy?(_), do: false
 
-  defp req do
-    Req.new(
-      base_url: Application.get_env(:nexo, :sigma_base_url, "https://sigma.upla.edu.pe/api"),
-      headers: [{"user-agent", "Nexo-Backend/0.1 (Elixir)"}],
-      receive_timeout: 30_000,
-      retry: false
-    )
+  # Every call goes through the guard: rate limit, circuit breaker, the
+  # dedicated pool and a timeout within the request's budget.
+  defp guarded(fun) do
+    Nexo.Upstream.Guard.run(:sigma, fn options ->
+      [
+        base_url: Application.get_env(:nexo, :sigma_base_url, "https://sigma.upla.edu.pe/api"),
+        headers: [{"user-agent", "Nexo-Backend/0.1 (Elixir)"}]
+      ]
+      |> Keyword.merge(options)
+      |> Req.new()
+      |> fun.()
+    end)
   end
 end

@@ -5,7 +5,11 @@ defmodule Nexo.Web.Api.UpstreamReply do
   def with_sources({:ok, data, sources}), do: reply({:ok, data, %{sources: sources}})
   def with_sources(error), do: reply(error)
 
-  def reply({:ok, data, meta}), do: {:ok, data, Map.put(meta, :fetched_at, DateTime.utc_now())}
+  @doc """
+  `meta.cached` says whether the answer came from the server's cache and
+  `meta.fetched_at` when it was read from the university.
+  """
+  def reply({:ok, data, meta}), do: {:ok, data, Map.merge(meta, Nexo.Infra.Cache.take_meta())}
 
   def reply({:error, :unknown_term}),
     do: {:error, 404, :unknown_term, "The student has no such term."}

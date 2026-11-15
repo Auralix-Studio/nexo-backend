@@ -11,8 +11,11 @@ defmodule Nexo.Web.Api.TeachingAccountTest do
     RateLimiter.reset()
 
     case Teachers.get_teacher_by_code("D001") do
-      %{"_id" => id} -> Cache.delete({:teacher_sections, Nexo.Infra.Db.id_to_string(id)})
-      _ -> :ok
+      %{"_id" => id} ->
+        Cache.invalidate_subject(%{type: :teacher, id: Nexo.Infra.Db.id_to_string(id)})
+
+      _ ->
+        :ok
     end
 
     :ok

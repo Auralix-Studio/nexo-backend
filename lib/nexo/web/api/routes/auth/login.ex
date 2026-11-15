@@ -4,7 +4,10 @@ defmodule Nexo.Web.Api.Routes.Auth.Login do
     method: :post,
     path: "/auth/login",
     auth: :public,
-    rate_limit: {60, 600},
+    # Per user (10 tries in 10 min), plus a high per-IP limit: a whole campus
+    # logs in from one NAT IP.
+    param_rate_limit: {:user, 10, 600},
+    rate_limit: {600, 600},
     params: [
       user: [type: :string, required: true, min: 3, max: 32],
       password: [type: :string, required: true, min: 1, max: 128]

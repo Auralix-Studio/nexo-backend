@@ -4,7 +4,8 @@ defmodule Nexo.Web.Api.Routes.Auth.Refresh do
     method: :post,
     path: "/auth/refresh",
     auth: :public,
-    rate_limit: {30, 600},
+    # Per IP: high, a whole campus shares one NAT IP (each token is single use).
+    rate_limit: {600, 600},
     params: [refresh_token: [type: :string, required: true, max: 256]],
     tags: ["auth"],
     description: "Exchanges a refresh token (single use) for a new access token."

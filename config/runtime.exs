@@ -137,6 +137,36 @@ if config_env() == :prod do
   # Check `Plug.SSL` for all available options in `force_ssl`.
 end
 
+# Pools and limits tunable without a build. MONGODB_POOL_SIZE: connections
+# per replica (default 15; check what the Atlas tier allows).
+int_env = fn name, default ->
+  case System.get_env(name) do
+    nil -> default
+    "" -> default
+    value -> String.to_integer(value)
+  end
+end
+
+if config_env() != :test do
+  config :nexo, :mongodb_pool_size, int_env.("MONGODB_POOL_SIZE", 15)
+
+  config :nexo, :rate_limits,
+    ip_per_minute: int_env.("RATE_LIMIT_IP_PER_MINUTE", 3000),
+    subject_per_minute: int_env.("RATE_LIMIT_SUBJECT_PER_MINUTE", 120),
+    public_ip_per_minute: int_env.("RATE_LIMIT_PUBLIC_IP_PER_MINUTE", 600)
+
+  config :nexo, :upstream_guard,
+    rate_per_second: int_env.("UPSTREAM_RATE_PER_SECOND", 25),
+    max_wait_ms: int_env.("UPSTREAM_MAX_WAIT_MS", 2_000),
+    failure_threshold: int_env.("UPSTREAM_FAILURE_THRESHOLD", 8),
+    open_ms: int_env.("UPSTREAM_OPEN_MS", 30_000),
+    call_timeout_ms: int_env.("UPSTREAM_CALL_TIMEOUT_MS", 10_000),
+    pool_timeout_ms: int_env.("UPSTREAM_POOL_TIMEOUT_MS", 2_000),
+    pool_size: int_env.("UPSTREAM_POOL_SIZE", 25)
+
+  config :nexo, :request_deadline_ms, int_env.("REQUEST_DEADLINE_MS", 20_000)
+end
+
 if config_env() == :prod do
   # Secretos obligatorios en producción: si faltan, el arranque falla en vez de
   # levantar un servicio a medias o con valores por defecto inseguros.

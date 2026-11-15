@@ -48,4 +48,9 @@ config :nexo, :app_check,
 
 config :nexo, :rate_limits,
   ip_per_minute: 100_000,
-  subject_per_minute: 100_000
+  subject_per_minute: 100_000,
+  public_ip_per_minute: 100_000
+
+# Tests change the mocked sessions between requests: university data is not
+# cached unless a test turns it on (see `Nexo.CacheTest`).
+config :nexo, :upstream_cache, false

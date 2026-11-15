@@ -43,7 +43,7 @@ defmodule Nexo.Infra.Db do
     String.starts_with?(url, "mongodb+srv://") or url =~ "tls=true" or url =~ "ssl=true"
   end
 
-  defp pool_size, do: Application.get_env(:nexo, :mongodb_pool_size, 5)
+  defp pool_size, do: Application.get_env(:nexo, :mongodb_pool_size, 15)
 
   def conn, do: @conn
 

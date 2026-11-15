@@ -12,8 +12,13 @@ defmodule Nexo.Application do
       {DNSCluster, query: Application.get_env(:nexo, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Nexo.PubSub},
       {Mongo, Nexo.Infra.Db.connection_opts()},
+      Nexo.Infra.SingleFlight,
       Nexo.Infra.Cache,
       Nexo.Infra.RateLimiter,
+      # Outbound calls to the university: dedicated pool, rate limit and
+      # circuit breaker (see `Nexo.Upstream.Guard`).
+      {Finch, name: Nexo.Upstream.Guard.finch(), pools: Nexo.Upstream.Guard.pools()},
+      Nexo.Upstream.Guard,
       # Start to serve requests, typically the last entry
       Nexo.Web.Endpoint
     ]

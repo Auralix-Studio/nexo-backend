@@ -14,10 +14,23 @@ defmodule Nexo.Academic.Profile do
   """
   import Nexo.Upstream.Sessions, only: [value: 1]
   alias Nexo.Academic.{Grades, Terms}
+  alias Nexo.Infra.Cache
   alias Nexo.Upstream.{Normalize, Sessions}
 
-  @doc "`{:ok, profile, sources}` or `{:error, :reauth_required}`."
+  @ttl :timer.hours(1)
+
+  @doc """
+  `{:ok, profile, sources}` or `{:error, :reauth_required}`. Cached 1 h per
+  user when every source answered.
+  """
   def get(subject, student) do
+    Cache.subject(subject, :profile, fn -> fetch(subject, student) end,
+      ttl: @ttl,
+      cache_if: &Cache.sources_ok?/1
+    )
+  end
+
+  defp fetch(subject, student) do
     {terms, term_sources} =
       case Terms.list(subject) do
         {:ok, terms, sources} -> {terms, sources}

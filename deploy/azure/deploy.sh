@@ -157,6 +157,13 @@ deploy() {
   )
   [[ -n "${FIREBASE_PROJECT_NUMBER:-}" ]] && env_vars+=("FIREBASE_PROJECT_NUMBER=$FIREBASE_PROJECT_NUMBER")
   [[ -n "${FIREBASE_APP_IDS:-}" ]] && env_vars+=("FIREBASE_APP_IDS=$FIREBASE_APP_IDS")
+  # Optional tunables (see config/runtime.exs); unset ones keep the defaults.
+  local tunable
+  for tunable in MONGODB_POOL_SIZE RATE_LIMIT_IP_PER_MINUTE RATE_LIMIT_SUBJECT_PER_MINUTE \
+    RATE_LIMIT_PUBLIC_IP_PER_MINUTE UPSTREAM_RATE_PER_SECOND UPSTREAM_POOL_SIZE \
+    UPSTREAM_CALL_TIMEOUT_MS UPSTREAM_FAILURE_THRESHOLD UPSTREAM_OPEN_MS REQUEST_DEADLINE_MS; do
+    if [[ -n "${!tunable:-}" ]]; then env_vars+=("$tunable=${!tunable}"); fi
+  done
   if [[ -n "${AUTHORIZED_TEACHERS:-}" ]]; then
     secrets+=("authorized-teachers=$AUTHORIZED_TEACHERS")
     env_vars+=("AUTHORIZED_TEACHERS=secretref:authorized-teachers")

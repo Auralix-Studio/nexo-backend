@@ -11,7 +11,7 @@ defmodule Nexo.Notifications.GradeAlerts do
   Grades are never stored here.
   """
   require Logger
-  alias Nexo.Infra.Db
+  alias Nexo.Infra.{Cache, Db}
   alias Nexo.Notifications.{Push, Settings}
   alias Nexo.People.Students
 
@@ -20,11 +20,29 @@ defmodule Nexo.Notifications.GradeAlerts do
   def saved(_section, nil), do: :ok
 
   def saved(section, changed) do
-    if Push.enabled?() do
-      Task.start(fn -> deliver(section, changed) end)
+    Task.start(fn ->
+      forget_grades(changed)
+      if Push.enabled?(), do: deliver(section, changed)
+    end)
+
+    :ok
+  end
+
+  # The push makes the student open the app: their cached grades (this
+  # node's) must not hide the new ones.
+  @doc false
+  def forget_grades(changed) do
+    for code <- changed |> Enum.map(& &1.student) |> Enum.uniq(),
+        %{"_id" => id} <- [Students.get_by_code(code)] do
+      subject = %{type: :student, id: Db.id_to_string(id)}
+      Cache.invalidate_subject(subject, {:grade_courses, :_})
+      Cache.invalidate_subject(subject, {:grade_course, :_, :_})
+      Cache.invalidate_subject(subject, :grades_summary)
     end
 
     :ok
+  rescue
+    error -> Logger.warning("grade cache invalidation failed: #{Exception.message(error)}")
   end
 
   @doc false

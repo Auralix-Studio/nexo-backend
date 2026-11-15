@@ -4,7 +4,7 @@ defmodule Nexo.People.Students do
   identify who logs in. Grades, payments and schedule are read live from the
   university, never stored here.
   """
-  alias Nexo.Infra.Db
+  alias Nexo.Infra.{Cache, Db}
 
   @collection "students"
 
@@ -43,6 +43,7 @@ defmodule Nexo.People.Students do
 
         with {:ok, _} <-
                Mongo.update_one(Db.conn(), @collection, %{_id: id}, %{"$set" => updates}) do
+          Cache.forget_subject_record(:student, Db.id_to_string(id))
           {:ok, Map.merge(student, updates)}
         end
     end

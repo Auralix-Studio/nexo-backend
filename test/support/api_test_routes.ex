@@ -69,3 +69,16 @@ defmodule Nexo.Web.Api.TestRoutes.TeachersOnly do
   @impl true
   def handle(_conn, _params), do: {:ok, %{}}
 end
+
+defmodule Nexo.Web.Api.TestRoutes.Attested do
+  @moduledoc false
+  use Nexo.Web.Api.Route,
+    name: "test.attested",
+    method: :get,
+    path: "/test/attested",
+    auth: :public,
+    description: "Test only: public, but only for the attested app."
+
+  @impl true
+  def handle(_conn, _params), do: {:ok, %{}}
+end

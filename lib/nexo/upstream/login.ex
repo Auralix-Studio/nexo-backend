@@ -14,7 +14,7 @@ defmodule Nexo.Upstream.Login do
   alias Nexo.People.{Students, Teachers}
   alias Nexo.Security.{Audit, Auth}
   alias Nexo.Sigma
-  alias Nexo.Infra.Db
+  alias Nexo.Infra.{Cache, Db}
   alias Nexo.Upstream.{Intranet, Languages, Normalize, Sessions}
 
   @parallel_timeout 30_000
@@ -31,21 +31,23 @@ defmodule Nexo.Upstream.Login do
     end
   end
 
+  # A Mongo failure while saving the account or its sessions is an outage
+  # (`:unavailable`), not a crash.
   defp teacher(profile, meta) do
-    {:ok, teacher} = Teachers.upsert_teacher_from_sigma(profile)
-    id = Db.id_to_string(teacher["_id"])
-    subject = %{type: :teacher, id: id}
-    :ok = Sessions.put(subject, %{sigma: profile.token})
-    audit(:teacher, teacher["sigma_code"], meta)
+    with {:ok, teacher} <- stored(Teachers.upsert_teacher_from_sigma(profile)),
+         subject = %{type: :teacher, id: Db.id_to_string(teacher["_id"])},
+         :ok <- open_sessions(subject, %{sigma: profile.token}) do
+      audit(:teacher, teacher["sigma_code"], meta)
 
-    {:ok,
-     session(subject, %{
-       code: teacher["sigma_code"],
-       role: "teacher",
-       first: teacher["first_name"],
-       last: teacher["last_name"],
-       sources: %{sigma: "ok", intranet: "not_applicable", languages: "not_applicable"}
-     })}
+      {:ok,
+       session(subject, %{
+         code: teacher["sigma_code"],
+         role: "teacher",
+         first: teacher["first_name"],
+         last: teacher["last_name"],
+         sources: %{sigma: "ok", intranet: "not_applicable", languages: "not_applicable"}
+       })}
+    end
   end
 
   # `intranet`: the Intranet login, unless it was already done.
@@ -61,10 +63,13 @@ defmodule Nexo.Upstream.Login do
         {:exit, _} -> {:error, :unavailable}
       end)
 
-    {:ok, student} = Students.upsert_from_sigma(profile)
-    id = Db.id_to_string(student["_id"])
-    subject = %{type: :student, id: id}
+    with {:ok, student} <- stored(Students.upsert_from_sigma(profile)) do
+      subject = %{type: :student, id: Db.id_to_string(student["_id"])}
+      student_session(subject, student, sessions, intranet, languages, meta)
+    end
+  end
 
+  defp student_session(subject, student, sessions, intranet, languages, meta) do
     # A student without a Language Center account is remembered as such, so
     # their requests do not try (and fail) to log in there every time.
     languages_session =
@@ -79,22 +84,33 @@ defmodule Nexo.Upstream.Login do
       |> Map.put(:intranet, Sessions.value(intranet))
       |> Map.put(:languages, languages_session)
 
-    :ok = Sessions.put(subject, sessions)
-    audit(:student, student["code"], meta)
+    with :ok <- open_sessions(subject, sessions) do
+      audit(:student, student["code"], meta)
 
-    {:ok,
-     session(subject, %{
-       code: student["code"],
-       role: "student",
-       first: student["first_name"],
-       last: student["last_name"],
-       sources: %{
-         sigma: if(sessions[:sigma], do: "ok", else: "unavailable"),
-         intranet: status(intranet),
-         languages: status(languages)
-       }
-     })}
+      {:ok,
+       session(subject, %{
+         code: student["code"],
+         role: "student",
+         first: student["first_name"],
+         last: student["last_name"],
+         sources: %{
+           sigma: if(sessions[:sigma], do: "ok", else: "unavailable"),
+           intranet: status(intranet),
+           languages: status(languages)
+         }
+       })}
+    end
   end
+
+  # New university sessions: what was cached for the user is dropped, so the
+  # next requests read fresh data with them.
+  defp open_sessions(subject, sessions) do
+    Cache.invalidate_subject(subject)
+    Sessions.put(subject, sessions)
+  end
+
+  defp stored({:ok, record}), do: {:ok, record}
+  defp stored(_error), do: {:error, :unavailable}
 
   # SIGMA is down: the Intranet confirms the password instead. Only students
   # have Intranet access, so the account is treated as a student.

@@ -23,11 +23,16 @@ defmodule Nexo.Billing.Payments do
   """
   import Nexo.Upstream.Normalize, only: [round2: 1]
   alias Nexo.Academic.Terms
+  alias Nexo.Infra.Cache
   alias Nexo.Upstream.{Intranet, Normalize, Sessions}
 
   @referer "consultaEstadoDeuda_Estudiante"
   @currency "PEN"
   @due_soon_days 7
+
+  # What the Intranet answered is cached 15 min per user; statuses are
+  # computed on every request from the day in Lima.
+  @ttl :timer.minutes(15)
 
   # --- Debt -------------------------------------------------------------------------------
 
@@ -36,22 +41,26 @@ defmodule Nexo.Billing.Payments do
     form = %{"codEst" => to_string(student["code"])}
 
     result =
-      Sessions.with_session(subject, :intranet, fn cookies ->
-        Enum.reduce_while(
-          ~w(consultarPensiones consultartotalPensiones consultarMatricula consultarReduccionDeuda consultarTasas),
-          {:ok, %{}, cookies},
-          fn path, {:ok, acc, cookies} ->
-            case Intranet.post(cookies, path, form, @referer) do
-              {:ok, rows, cookies} -> {:cont, {:ok, Map.put(acc, path, rows(rows)), cookies}}
-              error -> {:halt, error}
-            end
-          end
-        )
-      end)
+      Cache.subject(subject, :payments_debt, fn -> debt_rows(subject, form) end, ttl: @ttl)
 
     with {:ok, raw} <- result do
       {:ok, build_debt(raw, today), %{source: "intranet"}}
     end
+  end
+
+  defp debt_rows(subject, form) do
+    Sessions.with_session(subject, :intranet, fn cookies ->
+      Enum.reduce_while(
+        ~w(consultarPensiones consultartotalPensiones consultarMatricula consultarReduccionDeuda consultarTasas),
+        {:ok, %{}, cookies},
+        fn path, {:ok, acc, cookies} ->
+          case Intranet.post(cookies, path, form, @referer) do
+            {:ok, rows, cookies} -> {:cont, {:ok, Map.put(acc, path, rows(rows)), cookies}}
+            error -> {:halt, error}
+          end
+        end
+      )
+    end)
   end
 
   @doc false
@@ -238,6 +247,10 @@ defmodule Nexo.Billing.Payments do
 
   @doc "`{:ok, schedule, meta}` or an error."
   def schedule(subject) do
+    Cache.subject(subject, :payments_schedule, fn -> fetch_schedule(subject) end, ttl: @ttl)
+  end
+
+  defp fetch_schedule(subject) do
     with {:ok, rows} <-
            Sessions.intranet_get(
              subject,
@@ -281,6 +294,12 @@ defmodule Nexo.Billing.Payments do
 
   @doc "`{:ok, history, meta}` or an error."
   def history(subject, student) do
+    Cache.subject(subject, :payments_history, fn -> fetch_history(subject, student) end,
+      ttl: @ttl
+    )
+  end
+
+  defp fetch_history(subject, student) do
     form = %{"codEst" => to_string(student["code"])}
 
     with {:ok, rows} <-

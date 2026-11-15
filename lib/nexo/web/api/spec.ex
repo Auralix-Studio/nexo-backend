@@ -13,6 +13,7 @@ defmodule Nexo.Web.Api.Spec do
     params: [],
     attest: true,
     rate_limit: nil,
+    param_rate_limit: nil,
     flag: nil,
     tags: [],
     scopes: []
@@ -30,6 +31,7 @@ defmodule Nexo.Web.Api.Spec do
           params: keyword(keyword()),
           attest: boolean(),
           rate_limit: nil | {pos_integer(), pos_integer()},
+          param_rate_limit: nil | {atom(), pos_integer(), pos_integer()},
           flag: String.t() | nil,
           tags: [String.t()],
           scopes: [String.t()]

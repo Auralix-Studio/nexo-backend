@@ -31,11 +31,24 @@ defmodule Nexo.Academic.Grades do
   """
   import Nexo.Upstream.Normalize, only: [tidy: 1]
   alias Nexo.Academic.{Profile, Terms}
+  alias Nexo.Infra.Cache
   alias Nexo.Upstream.{Intranet, Normalize, Sessions}
 
   @passing 10.5
   @max 20
   @referer "repRankingPromocionalEst"
+
+  # Cache times per user: the active term's grades move, closed terms and
+  # the curriculum barely do.
+  @active_ttl :timer.minutes(5)
+  @closed_ttl :timer.hours(24)
+  @summary_ttl :timer.minutes(5)
+  @averages_ttl :timer.hours(6)
+  @empty_averages_ttl :timer.minutes(30)
+  @curriculum_ttl :timer.hours(6)
+  # In-progress course details fetched at once (`:grade_detail_concurrency`;
+  # 1 if the Intranet turns out to serialize requests of one PHP session).
+  @detail_concurrency 4
 
   @legacy_keys ~w(nombreFacultad nombreCarrera planEstudios codigo asignatura plan ciclo
     seccion credito asistencia pF1 pF2 pf complementario pfp cc cicloTotal seccionTotal
@@ -54,7 +67,7 @@ defmodule Nexo.Academic.Grades do
   """
   def term(subject, term_id \\ nil) do
     with {:ok, term} <- Terms.resolve(subject, term_id),
-         {:ok, courses, source} <- courses(subject, term) do
+         {:ok, courses, source} <- cached_courses(subject, term) do
       model = model(term)
 
       {:ok,
@@ -68,10 +81,23 @@ defmodule Nexo.Academic.Grades do
     end
   end
 
-  @doc "`{:ok, course_grades, meta}` or `{:error, :unknown_course | …}`."
+  @doc """
+  `{:ok, course_grades, meta}` or `{:error, :unknown_course | …}`. Only that
+  course's detail is fetched (the term's list is reused when cached).
+  """
   def course(subject, term_id, code) do
-    with {:ok, term} <- Terms.resolve(subject, term_id),
-         {:ok, courses, source} <- courses(subject, term),
+    with {:ok, term} <- Terms.resolve(subject, term_id) do
+      Cache.subject(
+        subject,
+        {:grade_course, term.id, code},
+        fn -> fetch_course(subject, term, code) end,
+        ttl: term_ttl(term)
+      )
+    end
+  end
+
+  defp fetch_course(subject, term, code) do
+    with {:ok, courses, source} <- course_list(subject, term),
          %{} = course <- Enum.find(courses, &(&1.id == code)) || {:error, :unknown_course},
          {:ok, course} <- with_units(subject, term, course) do
       units = course.units || []
@@ -100,9 +126,31 @@ defmodule Nexo.Academic.Grades do
     if {year, number} >= {2026, 1}, do: "competencies", else: "legacy"
   end
 
-  defp courses(subject, term) do
+  defp term_ttl(%{active: true}), do: @active_ttl
+  defp term_ttl(_closed), do: @closed_ttl
+
+  # The term's courses with the details of those in progress, cached.
+  defp cached_courses(subject, term) do
+    Cache.subject(
+      subject,
+      {:grade_courses, term.id},
+      fn -> courses(subject, term, :in_progress) end,
+      ttl: term_ttl(term)
+    )
+  end
+
+  # For one course: the cached full list if there is one, else only the
+  # list (no details).
+  defp course_list(subject, term) do
+    case Cache.peek_subject(subject, {:grade_courses, term.id}) do
+      {:ok, {:ok, _, _} = cached} -> cached
+      _ -> courses(subject, term, :none)
+    end
+  end
+
+  defp courses(subject, term, details) do
     case model(term) do
-      "competencies" -> competencies(subject, term)
+      "competencies" -> competencies(subject, term, details)
       "legacy" -> legacy(subject, term)
     end
   end
@@ -111,7 +159,7 @@ defmodule Nexo.Academic.Grades do
 
   # --- Competencies model -----------------------------------------------------------
 
-  defp competencies(subject, term) do
+  defp competencies(subject, term, details) do
     result =
       Sessions.with_session(subject, :intranet, fn cookies ->
         with {:ok, rows, cookies} <-
@@ -123,7 +171,7 @@ defmodule Nexo.Academic.Grades do
                 course = competency_course(row),
                 do: course
 
-          {:ok, Enum.map(courses, &in_progress_units(cookies, term, &1)), cookies}
+          {:ok, with_details(details, cookies, term, courses), cookies}
         end
       end)
 
@@ -186,7 +234,25 @@ defmodule Nexo.Academic.Grades do
   defp pass_or_fail(grade), do: if(grade >= @passing, do: "passed", else: "failed")
 
   # In-progress courses need their detail for the real current average; the
-  # rest keep the official grade until someone opens them.
+  # rest keep the official grade until someone opens them. The details are
+  # fetched a few at a time, not one after another.
+  defp with_details(:none, _cookies, _term, courses), do: courses
+
+  defp with_details(:in_progress, cookies, term, courses) do
+    courses
+    |> Task.async_stream(&in_progress_units(cookies, term, &1),
+      max_concurrency: Application.get_env(:nexo, :grade_detail_concurrency, @detail_concurrency),
+      timeout: 15_000,
+      on_timeout: :kill_task,
+      ordered: true
+    )
+    |> Enum.zip(courses)
+    |> Enum.map(fn
+      {{:ok, course}, _} -> course
+      {{:exit, _}, course} -> course
+    end)
+  end
+
   defp in_progress_units(cookies, term, %{status: "in_progress"} = course) do
     case detail_rows(cookies, term, course.upstream_id) do
       {:ok, rows} -> apply_detail(course, rows)
@@ -547,8 +613,19 @@ defmodule Nexo.Academic.Grades do
 
   # --- Summary --------------------------------------------------------------------------
 
-  @doc "`{:ok, summary, meta}` or `{:error, :reauth_required}`."
+  @doc """
+  `{:ok, summary, meta}` or `{:error, :reauth_required}`. Reuses the cached
+  profile and active-term grades; cached 5 min per user when every source
+  answered.
+  """
   def summary(subject, student) do
+    Cache.subject(subject, :grades_summary, fn -> fetch_summary(subject, student) end,
+      ttl: @summary_ttl,
+      cache_if: &match?({:ok, _, %{sources: s}} when s == %{sigma: "ok", intranet: "ok"}, &1)
+    )
+  end
+
+  defp fetch_summary(subject, student) do
     [profile, averages, current] =
       [
         fn -> Profile.get(subject, student) end,
@@ -608,40 +685,50 @@ defmodule Nexo.Academic.Grades do
   defp current_term(_), do: nil
 
   # SIGMA's per-term averages come back empty for some accounts; then each
-  # past term's own grades give its credit-weighted average. Cached for 30
-  # minutes per student: closed terms do not change.
-  defp computed_term_averages(%{type: type, id: id} = subject) do
+  # past term's own grades give its credit-weighted average. Cached per
+  # student, `:empty` too (shorter), so an account without them does not
+  # recompute every past term on each call.
+  defp computed_term_averages(subject) do
     result =
-      Nexo.Infra.Cache.fetch({:term_averages, type, id}, 30 * 60_000, fn ->
-        case Terms.list(subject) do
-          {:ok, terms, _} ->
-            terms
-            |> Enum.reject(& &1.active)
-            |> Enum.take(14)
-            |> Task.async_stream(
-              fn t ->
-                case term(subject, t.id) do
-                  {:ok, %{average: %{value: v}}, _} when is_number(v) -> %{term: t.id, average: v}
-                  _ -> nil
-                end
-              end,
-              max_concurrency: 3,
-              timeout: 40_000,
-              on_timeout: :kill_task
-            )
-            |> Enum.flat_map(fn
-              {:ok, %{} = row} -> [row]
-              _ -> []
-            end)
-            |> case do
-              [] -> :empty
-              rows -> {:ok, rows}
-            end
+      Cache.subject(
+        subject,
+        :computed_term_averages,
+        fn ->
+          case Terms.list(subject) do
+            {:ok, terms, _} ->
+              terms
+              |> Enum.reject(& &1.active)
+              |> Enum.take(14)
+              |> Task.async_stream(
+                fn t ->
+                  case term(subject, t.id) do
+                    {:ok, %{average: %{value: v}}, _} when is_number(v) ->
+                      %{term: t.id, average: v}
 
-          _ ->
-            :empty
-        end
-      end)
+                    _ ->
+                      nil
+                  end
+                end,
+                max_concurrency: 3,
+                timeout: 40_000,
+                on_timeout: :kill_task
+              )
+              |> Enum.flat_map(fn
+                {:ok, %{} = row} -> [row]
+                _ -> []
+              end)
+              |> case do
+                [] -> :empty
+                rows -> {:ok, rows}
+              end
+
+            _ ->
+              :failed
+          end
+        end,
+        ttl: &if(&1 == :empty, do: @empty_averages_ttl, else: @averages_ttl),
+        cache_if: &(&1 != :failed)
+      )
 
     case result do
       {:ok, rows} -> rows
@@ -650,6 +737,12 @@ defmodule Nexo.Academic.Grades do
   end
 
   defp term_averages(subject) do
+    Cache.subject(subject, :term_averages, fn -> fetch_term_averages(subject) end,
+      ttl: @averages_ttl
+    )
+  end
+
+  defp fetch_term_averages(subject) do
     with {:ok, data} <- Sessions.sigma_fetch(subject, "/Estudiante/ListarPromediosResumen") do
       rows =
         for row <- List.wrap(data),
@@ -668,6 +761,12 @@ defmodule Nexo.Academic.Grades do
 
   @doc "`{:ok, curriculum, meta}` or `{:error, :reauth_required | :unavailable}`."
   def curriculum(subject, student) do
+    Cache.subject(subject, :curriculum, fn -> fetch_curriculum(subject, student) end,
+      ttl: @curriculum_ttl
+    )
+  end
+
+  defp fetch_curriculum(subject, student) do
     form = %{"codest" => to_string(student["code"])}
 
     with {:ok, rows} <-

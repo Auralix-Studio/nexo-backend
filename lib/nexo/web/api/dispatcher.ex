@@ -3,16 +3,21 @@ defmodule Nexo.Web.Api.Dispatcher do
   Runs every route-module request through the same chain, in this order:
 
     1. Security headers on every response.
-    2. Per-IP rate limit, before any work, so floods are cut cheaply.
+    2. Per-IP rate limit, before any work, so floods are cut cheaply. It is
+       high (`ip_per_minute`, 3000): a whole campus shares one NAT IP.
     3. Route lookup (`404` / `405`).
     4. Feature flag (`503` when switched off).
     5. App attestation: the request must come from the Nexo app (`401`).
     6. Authentication and subject type (`401` / `403`).
-    7. Per-user and per-route rate limits (`429`).
+    7. Per-user and per-route rate limits (`429`). Public routes have no
+       user: they get their own per-IP limit (`public_ip_per_minute`).
     8. Param whitelist and validation (`422`), always, also on
-       authenticated routes.
-    9. The route's `handle/2`, whose result is wrapped in the standard
-       envelope. A crash answers `500` with the request id only.
+       authenticated routes; then the route's per-param limit (the login
+       is limited per `user`, not per IP).
+    9. The route's `handle/2`, within a time budget (`request_deadline_ms`,
+       20 s, below the app's 25 s; see `Nexo.Infra.Deadline`), whose result
+       is wrapped in the standard envelope. A crash answers `500` with the
+       request id only.
 
   Mounted at the root of the API host, after the legacy `/api/v1` routes.
   There is no version prefix: one is added only when a breaking change needs
@@ -22,7 +27,7 @@ defmodule Nexo.Web.Api.Dispatcher do
   import Plug.Conn
   require Logger
 
-  alias Nexo.Infra.{Flags, RateLimiter}
+  alias Nexo.Infra.{Cache, Deadline, Flags, RateLimiter}
   alias Nexo.Integrations.Connections
 
   alias Nexo.People.{Guardians, Students, Teachers}
@@ -31,7 +36,8 @@ defmodule Nexo.Web.Api.Dispatcher do
   alias Nexo.Web.{ClientIp, SecurityHeaders}
   alias Nexo.Web.Api.{Params, Registry, Response}
 
-  @default_limits [ip_per_minute: 300, subject_per_minute: 120]
+  @default_limits [ip_per_minute: 3000, subject_per_minute: 120, public_ip_per_minute: 600]
+  @default_deadline_ms 20_000
 
   @impl true
   def init(opts), do: opts
@@ -47,7 +53,8 @@ defmodule Nexo.Web.Api.Dispatcher do
          {:ok, conn} <- attest(conn, spec),
          {:ok, conn} <- authenticate(conn, spec),
          {:ok, conn} <- limit_subject(conn, spec),
-         {:ok, params} <- validate(conn, spec, path_params) do
+         {:ok, params} <- validate(conn, spec, path_params),
+         {:ok, conn} <- limit_param(conn, spec, params) do
       execute(conn, spec, params)
     else
       {:halt, conn} -> conn
@@ -162,8 +169,15 @@ defmodule Nexo.Web.Api.Dispatcher do
          {:ok, %{type: type, id: id}} <- Auth.verify_access_token(token) do
       if type in allowed do
         case load_subject(type, id) do
-          nil -> {:halt, Response.error(conn, :unauthorized)}
-          record -> {:ok, assign(conn, :current_subject, %{type: type, id: id, record: record})}
+          {:ok, record} ->
+            {:ok, assign(conn, :current_subject, %{type: type, id: id, record: record})}
+
+          # Mongo is failing: an outage, not a reason to log in again.
+          {:error, _} ->
+            {:halt, Response.error(conn, :upstream_unavailable)}
+
+          nil ->
+            {:halt, Response.error(conn, :unauthorized)}
         end
       else
         {:halt, Response.error(conn, :forbidden)}
@@ -173,14 +187,20 @@ defmodule Nexo.Web.Api.Dispatcher do
     end
   end
 
-  # The record is reloaded on every request, so suspending a teacher or
-  # unlinking a guardian takes effect at once, not when the token expires.
-  defp load_subject(:teacher, id), do: Teachers.get_teacher(id)
-  defp load_subject(:student, id), do: Students.get(id)
+  # Student and teacher records are kept 30 s in memory (dropped when this
+  # node updates them), so suspending a teacher takes effect within 30 s,
+  # not when the token expires. Guardians are read every time: unlinking
+  # one takes effect at once. `{:ok, record}`, `nil` or `{:error, _}`.
+  defp load_subject(:teacher, id),
+    do: Cache.subject_record(:teacher, id, fn -> Teachers.get_teacher(id) end)
+
+  defp load_subject(:student, id),
+    do: Cache.subject_record(:student, id, fn -> Students.get(id) end)
 
   defp load_subject(:guardian, id) do
     case Guardians.get(id) do
-      %{} = guardian -> if Guardians.active?(guardian), do: guardian
+      %{} = guardian -> if Guardians.active?(guardian), do: {:ok, guardian}
+      {:error, _} = error -> error
       _ -> nil
     end
   end
@@ -190,13 +210,18 @@ defmodule Nexo.Web.Api.Dispatcher do
   defp limit_subject(conn, spec) do
     who = identity(conn)
 
-    with :ok <- RateLimiter.hit({:subject, who}, limit(:subject_per_minute), 60),
+    with :ok <- limit_who(who),
          :ok <- limit_route(spec, who) do
       {:ok, conn}
     else
       {:error, retry_after} -> {:halt, rate_limited(conn, retry_after)}
     end
   end
+
+  defp limit_who({:ip, ip}),
+    do: RateLimiter.hit({:public, ip}, limit(:public_ip_per_minute), 60)
+
+  defp limit_who(who), do: RateLimiter.hit({:subject, who}, limit(:subject_per_minute), 60)
 
   defp limit_route(%{rate_limit: nil}, _who), do: :ok
 
@@ -223,9 +248,30 @@ defmodule Nexo.Web.Api.Dispatcher do
   defp merge_map(base, %{} = extra), do: Map.merge(base, extra)
   defp merge_map(base, _), do: base
 
+  defp limit_param(conn, %{param_rate_limit: nil}, _params), do: {:ok, conn}
+
+  defp limit_param(conn, %{param_rate_limit: {param, count, seconds}, name: name}, params) do
+    value = params |> Map.get(param) |> to_string() |> String.trim() |> String.downcase()
+
+    case RateLimiter.hit({:param, name, value}, count, seconds) do
+      :ok -> {:ok, conn}
+      {:error, retry_after} -> {:halt, rate_limited(conn, retry_after)}
+    end
+  end
+
   # --- 9. Execute -----------------------------------------------------------
 
   defp execute(conn, spec, params) do
+    # A kept-alive connection runs several requests in the same process.
+    Cache.reset_meta()
+    Deadline.start(Application.get_env(:nexo, :request_deadline_ms, @default_deadline_ms))
+    run(conn, spec, params)
+  after
+    Deadline.clear()
+    Cache.reset_meta()
+  end
+
+  defp run(conn, spec, params) do
     case spec.module.handle(conn, params) do
       %Plug.Conn{} = conn ->
         conn

@@ -15,37 +15,50 @@ defmodule Nexo.Academic.Schedule do
     * SIGMA's teacher (`docente`) is read; the app read a missing key.
   """
   alias Nexo.Academic.{Languages, Terms}
+  alias Nexo.Infra.Cache
   alias Nexo.Schedule.Days
   alias Nexo.Upstream.{Intranet, Normalize, Sessions}
 
-  @doc "`{:ok, schedule, sources}` or `{:error, :reauth_required | :unknown_term}`."
+  @ttl :timer.hours(1)
+
+  @doc """
+  `{:ok, schedule, sources}` or `{:error, :reauth_required | :unknown_term}`.
+  Cached 1 h per user and term when every source answered.
+  """
   def get(subject, student, term_id \\ nil) do
     with {:ok, term} <- Terms.resolve(subject, term_id) do
-      intranet = from_intranet(subject, term)
+      Cache.subject(subject, {:schedule, term.id}, fn -> fetch(subject, student, term) end,
+        ttl: @ttl,
+        cache_if: &Cache.sources_ok?/1
+      )
+    end
+  end
 
-      {university, sigma} =
-        case intranet do
-          {:ok, [_ | _] = classes} -> {classes, :skipped}
-          _ -> sigma_fallback(subject)
-        end
+  defp fetch(subject, student, term) do
+    intranet = from_intranet(subject, term)
 
-      languages = Languages.current_classes(subject, student)
-
-      if match?({:error, :reauth_required}, intranet) and
-           match?({:error, :reauth_required}, sigma) do
-        {:error, :reauth_required}
-      else
-        classes =
-          (university ++ elem(languages, 1))
-          |> Enum.sort_by(&{&1.weekday, &1.start, &1.course.name})
-
-        {:ok, %{term: %{id: term.id, label: term.label}, classes: classes},
-         %{
-           intranet: Sessions.status(intranet),
-           sigma: if(sigma == :skipped, do: "not_needed", else: Sessions.status(sigma)),
-           languages: elem(languages, 0)
-         }}
+    {university, sigma} =
+      case intranet do
+        {:ok, [_ | _] = classes} -> {classes, :skipped}
+        _ -> sigma_fallback(subject)
       end
+
+    languages = Languages.current_classes(subject, student)
+
+    if match?({:error, :reauth_required}, intranet) and
+         match?({:error, :reauth_required}, sigma) do
+      {:error, :reauth_required}
+    else
+      classes =
+        (university ++ elem(languages, 1))
+        |> Enum.sort_by(&{&1.weekday, &1.start, &1.course.name})
+
+      {:ok, %{term: %{id: term.id, label: term.label}, classes: classes},
+       %{
+         intranet: Sessions.status(intranet),
+         sigma: if(sigma == :skipped, do: "not_needed", else: Sessions.status(sigma)),
+         languages: elem(languages, 0)
+       }}
     end
   end
 

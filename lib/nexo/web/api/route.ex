@@ -29,7 +29,10 @@ defmodule Nexo.Web.Api.Route do
     * `:attest` — require proof that the call comes from the Nexo app
       (default `true`; see `Nexo.Security.AppCheck`).
     * `:rate_limit` — extra `{requests, seconds}` limit for this route, on
-      top of the global ones.
+      top of the global ones (per user, or per IP on public routes).
+    * `:param_rate_limit` — `{param, requests, seconds}`: a limit keyed by
+      the value of a validated param (the login's `user`), so people behind
+      one IP (the campus NAT) do not share it.
     * `:flag` — `false` exempts the route from feature flags (admin routes,
       so the switch cannot lock itself out).
     * `:description`, `:tags` — shown in the admin catalog.
@@ -96,6 +99,8 @@ defmodule Nexo.Web.Api.Route do
       params: params,
       attest: validate_attest!(module, auth, Keyword.get(opts, :attest, auth != :integration)),
       rate_limit: validate_rate_limit!(module, Keyword.get(opts, :rate_limit)),
+      param_rate_limit:
+        validate_param_rate_limit!(module, Keyword.get(opts, :param_rate_limit), params),
       flag: validate_flag!(module, Keyword.get(opts, :flag, name)),
       tags: Keyword.get(opts, :tags, []),
       scopes: validate_scopes!(module, auth, Keyword.get(opts, :scopes, []))
@@ -209,6 +214,19 @@ defmodule Nexo.Web.Api.Route do
 
   defp validate_rate_limit!(module, _),
     do: fail!(module, "rate_limit must be {requests, seconds}")
+
+  defp validate_param_rate_limit!(_module, nil, _params), do: nil
+
+  defp validate_param_rate_limit!(module, {param, count, seconds} = limit, params)
+       when is_atom(param) and is_integer(count) and count > 0 and is_integer(seconds) and
+              seconds > 0 do
+    if Keyword.has_key?(params, param),
+      do: limit,
+      else: fail!(module, "param_rate_limit names an undeclared param #{inspect(param)}")
+  end
+
+  defp validate_param_rate_limit!(module, _, _params),
+    do: fail!(module, "param_rate_limit must be {param, requests, seconds}")
 
   defp validate_flag!(_module, false), do: nil
   defp validate_flag!(_module, flag) when is_binary(flag), do: flag

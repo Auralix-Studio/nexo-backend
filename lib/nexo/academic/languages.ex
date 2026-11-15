@@ -11,16 +11,28 @@ defmodule Nexo.Academic.Languages do
   `"no_access"` (set at login): they get an empty list, and nothing is
   retried on every request.
   """
+  alias Nexo.Infra.Cache
   alias Nexo.Schedule.Days
   alias Nexo.Upstream.{Languages, Normalize, Sessions}
 
   @no_access "no_access"
   @grade_columns ~w(nota1 nota2 nota3 nota4 nota5 nota6)
+  @ttl :timer.hours(1)
 
   def no_access_marker, do: @no_access
 
-  @doc "`{:ok, courses, status}` or `{:error, :reauth_required}`."
+  @doc """
+  `{:ok, courses, status}` or `{:error, :reauth_required}`. Cached 1 h per
+  user when the Language Center answered (or the student has no account).
+  """
   def list(subject, student) do
+    Cache.subject(subject, :languages, fn -> fetch(subject, student) end,
+      ttl: @ttl,
+      cache_if: &match?({:ok, _, status} when status in ["ok", "no_access"], &1)
+    )
+  end
+
+  defp fetch(subject, student) do
     code = student["code"]
 
     result =

@@ -236,7 +236,7 @@ defmodule Nexo.Web.Api.DispatcherTest do
       key = AppCheckHelper.enable(:enforce)
       now = System.system_time(:second)
 
-      assert json_response(get(conn, "/status"), 401)["error"]["code"] ==
+      assert json_response(get(conn, "/test/attested"), 401)["error"]["code"] ==
                "app_not_verified"
 
       for bad <- [
@@ -250,12 +250,12 @@ defmodule Nexo.Web.Api.DispatcherTest do
           ] do
         conn = put_req_header(conn, "x-firebase-appcheck", bad)
 
-        assert json_response(get(conn, "/status"), 401)["error"]["code"] ==
+        assert json_response(get(conn, "/test/attested"), 401)["error"]["code"] ==
                  "app_not_verified"
       end
 
       good = put_req_header(conn, "x-firebase-appcheck", AppCheckHelper.token(key))
-      assert json_response(get(good, "/status"), 200)
+      assert json_response(get(good, "/test/attested"), 200)
     end
 
     test "it also guards the legacy /api/v1 routes, but not health checks", %{conn: conn} do
@@ -268,9 +268,14 @@ defmodule Nexo.Web.Api.DispatcherTest do
       assert get(conn, "/health").status in [200, 503]
     end
 
+    test "the /status ping needs no attestation", %{conn: conn} do
+      AppCheckHelper.enable(:enforce)
+      assert json_response(get(conn, "/status"), 200)["data"]["status"] == "ok"
+    end
+
     test "monitor mode only logs", %{conn: conn} do
       AppCheckHelper.enable(:monitor)
-      assert json_response(get(conn, "/status"), 200)
+      assert json_response(get(conn, "/test/attested"), 200)
     end
 
     test "enforce without a project number fails closed", %{conn: conn} do
@@ -279,7 +284,7 @@ defmodule Nexo.Web.Api.DispatcherTest do
       Application.put_env(:nexo, :app_check, Keyword.put(config, :project_number, nil))
 
       conn = put_req_header(conn, "x-firebase-appcheck", AppCheckHelper.token(key))
-      assert json_response(get(conn, "/status"), 401)
+      assert json_response(get(conn, "/test/attested"), 401)
     end
   end
 end

@@ -165,14 +165,21 @@ runs each request through the same chain:
 | Step | Rejects with |
 | --- | --- |
 | Security headers (`no-store`, `nosniff`, deny-all CSP, HSTS) | — |
-| Per-IP rate limit, before any work | `429 rate_limited` |
+| Per-IP rate limit (3000/min: a campus shares one NAT IP), before any work | `429 rate_limited` |
 | Route lookup | `404 not_found`, `405 method_not_allowed` |
 | Feature flag | `503 feature_disabled` |
 | App attestation (Firebase App Check) | `401 app_not_verified` |
 | Authentication and subject type | `401 unauthorized`, `403 forbidden` |
-| Per-user and per-route rate limits | `429 rate_limited` + `Retry-After` |
-| Param whitelist and validation | `422 invalid_params` with every bad field |
-| `handle/2`; a crash answers with the request id only | `500 internal_error` |
+| Per-user (120/min), public per-IP (600/min) and per-route rate limits | `429 rate_limited` + `Retry-After` |
+| Param whitelist and validation; per-param limits (login: 10 per user in 10 min) | `422 invalid_params` with every bad field |
+| `handle/2` within a 20 s budget; a crash answers with the request id only | `500 internal_error` |
+
+University data is cached per user with single-flight (`Nexo.Infra.Cache`),
+and every outbound call goes through `Nexo.Upstream.Guard`: a dedicated Finch
+pool (25 connections per host), 10 s per call, 25 calls/s per host and
+replica, and a circuit breaker (8 consecutive failures open it for 30 s).
+TTLs and limits are listed in `docs/api-models.md`; the tunables are in
+`config/runtime.exs` (`MONGODB_POOL_SIZE`, default 15, and others).
 
 Every response has the same shape: `{"ok": true, "data": ...}` or
 `{"ok": false, "error": {"code", "message", "details"?}, "request_id"}`.

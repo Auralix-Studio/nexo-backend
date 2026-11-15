@@ -112,7 +112,7 @@ defmodule Nexo.Web.Api.NotificationsTest do
   describe "a teacher saving grades" do
     setup do
       case Teachers.get_teacher_by_code("D001") do
-        %{"_id" => id} -> Cache.delete({:teacher_sections, Db.id_to_string(id)})
+        %{"_id" => id} -> Cache.invalidate_subject(%{type: :teacher, id: Db.id_to_string(id)})
         _ -> :ok
       end
 

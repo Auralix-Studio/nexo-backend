@@ -11,19 +11,31 @@ defmodule Nexo.Teaching.Gradebook do
   backend picks insert or update, validates the range, skips unchanged
   values and reports per student. `tipoCalif` 0 means 12 upstream.
   """
+  alias Nexo.Infra.Cache
   alias Nexo.Teaching.{Sections, Upstream}
   alias Nexo.Upstream.Normalize
 
   @risk_percent 70
   @type_order %{"EV" => 1, "DE" => 2, "PR" => 3}
+  @read_ttl :timer.minutes(3)
 
   # --- Roster ------------------------------------------------------------------------
 
-  @doc "`{:ok, roster, meta}` or an error."
+  @doc """
+  `{:ok, roster, meta}` or an error. SIGMA's rows are cached 3 min per
+  teacher and section, dropped by the teacher's writes.
+  """
   def roster(subject, section_id) do
     with {:ok, section} <- Sections.resolve(subject, section_id),
          {:ok, rows} <-
-           Upstream.get(subject, "/Docente/NotasEstudianteResumenV1", summary_query(section)) do
+           Cache.subject(
+             subject,
+             {:roster, section.id},
+             fn ->
+               Upstream.get(subject, "/Docente/NotasEstudianteResumenV1", summary_query(section))
+             end,
+             ttl: @read_ttl
+           ) do
       audit(subject, :section_roster_read, section)
 
       {:ok,
@@ -189,13 +201,16 @@ defmodule Nexo.Teaching.Gradebook do
   def write(subject, section_id, params) do
     with {:ok, section} <- Sections.resolve(subject, section_id) do
       result =
-        Upstream.session(subject, fn get, post ->
-          with {:ok, units} <- catalog(get, section),
-               {:ok, unit} <- find_unit(units, params.unit_id),
-               {:ok, type} <- find_type(unit, params.type_id),
-               {:ok, rows} <- get.("/Docente/NotasEstudianteResumenV1", summary_query(section)) do
-            {:ok, save(post, unit, type, params, Upstream.maps(rows))}
-          end
+        Sections.written(subject, section, fn ->
+          Upstream.session(subject, fn get, post ->
+            with {:ok, units} <- catalog(get, section),
+                 {:ok, unit} <- find_unit(units, params.unit_id),
+                 {:ok, type} <- find_type(unit, params.type_id),
+                 {:ok, rows} <-
+                   get.("/Docente/NotasEstudianteResumenV1", summary_query(section)) do
+              {:ok, save(post, unit, type, params, Upstream.maps(rows))}
+            end
+          end)
         end)
 
       with {:ok, summary} <- result do

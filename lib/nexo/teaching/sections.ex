@@ -35,23 +35,37 @@ defmodule Nexo.Teaching.Sections do
     end
   end
 
-  defp internal(%{type: :teacher, id: id} = subject) do
-    Cache.fetch({:teacher_sections, id}, @ttl, fn ->
-      Upstream.session(subject, fn get, _post ->
-        with {:ok, grades} <- get.("/Docente/GetAsignaturaDocente", %{"modo" => "Notas"}) do
-          attendance =
-            case get.("/Docente/GetAsignaturaDocente", %{"modo" => "Asistencia"}) do
-              {:ok, rows} -> Upstream.maps(rows)
-              _ -> []
-            end
-
-          {:ok, merge(Upstream.maps(grades), attendance)}
-        end
-      end)
-    end)
+  defp internal(%{type: :teacher} = subject) do
+    Cache.subject(subject, :teacher_sections, fn -> fetch(subject) end, ttl: @ttl)
   end
 
   defp internal(_), do: {:error, :forbidden}
+
+  defp fetch(subject) do
+    Upstream.session(subject, fn get, _post ->
+      with {:ok, grades} <- get.("/Docente/GetAsignaturaDocente", %{"modo" => "Notas"}) do
+        attendance =
+          case get.("/Docente/GetAsignaturaDocente", %{"modo" => "Asistencia"}) do
+            {:ok, rows} -> Upstream.maps(rows)
+            _ -> []
+          end
+
+        {:ok, merge(Upstream.maps(grades), attendance)}
+      end
+    end)
+  end
+
+  @doc """
+  Runs the write `fun` on `section`, then drops the teacher's cached reads
+  of it (roster, attendance), whatever the result: even a failed write may
+  have saved part of the marks. Returns `fun`'s result.
+  """
+  def written(subject, section, fun) do
+    fun.()
+  after
+    Cache.invalidate_subject(subject, {:roster, section.id})
+    Cache.invalidate_subject(subject, {:attendance, section.id})
+  end
 
   @doc false
   def public(s) do
