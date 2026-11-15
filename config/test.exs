@@ -34,6 +34,7 @@ config :nexo,
   sigma_client: Nexo.SigmaMock,
   intranet_client: Nexo.IntranetMock,
   languages_client: Nexo.LanguagesMock,
+  fcm_client: Nexo.FcmMock,
   admin_api_key: "test-admin-key",
   authorized_teachers: "PRE-001",
   system_admins: "62017241"

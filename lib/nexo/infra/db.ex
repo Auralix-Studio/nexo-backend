@@ -128,6 +128,15 @@ defmodule Nexo.Infra.Db do
       %{key: %{student_id: 1, revoked_at: 1}, name: "student_idx"}
     ])
 
+    create_indexes("devices", [
+      %{key: %{token: 1}, name: "token_unique", unique: true},
+      %{key: %{subject_type: 1, subject_id: 1}, name: "subject_idx"}
+    ])
+
+    create_indexes("notification_settings", [
+      %{key: %{subject_type: 1, subject_id: 1}, name: "subject_unique", unique: true}
+    ])
+
     create_indexes("audit_log", [
       %{key: %{inserted_at: -1}, name: "inserted_at_idx"},
       %{key: %{actor_id: 1}, name: "actor_id_idx"}

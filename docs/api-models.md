@@ -78,6 +78,7 @@ stay in the backend. The app addresses everything by Nexo ids.
 | `GET /teaching/compliance?from=&to=` | Compliance[] | SIGMA `getAsistenciaDiaria` (all pages) | `cumplimiento` |
 
 Already live: `/status`, `/me`, `/me/shared`, `/me/calendar`, `/me/connections/*`,
+`/me/devices`, `/me/notifications` (section 8),
 `/oauth/*`, `/integrations/*`, `/admin/*`, and the legacy `/api/v1` routes the
 app still calls: `/api/v1/directory/*` (access, students, schools, grants and
 guardian links) and `/api/v1/guardian/login`, `/api/v1/guardian/students/{code}`.
@@ -747,3 +748,37 @@ is a new row in `legal_acceptances` (subject, version, timestamp, IP, user
 agent) plus a `legal_accepted` audit entry; versions above the current one
 are `422 unknown_version`. HTML pages: `/terminos`, `/privacidad` (and
 `/privacy`), `/cookies`. `/terms` stays the students' term list.
+
+## 8. Notifications
+
+Grade notifications are driven by events, not polling: when a teacher saves
+grades through Nexo (`PUT /teaching/sections/{id}/grades`) and SIGMA confirms
+them, each affected student who has the app with notifications on gets a push
+(FCM HTTP v1) at once. Nothing reads the university periodically and nothing
+logs in in the background. Grades entered outside Nexo are detected by the
+app itself when grades load. Student routes only.
+
+| Route | Body | Answer |
+| --- | --- | --- |
+| `POST /me/devices` | `{ "token": "<FCM token>", "platform": "android" }` | `201 { "registered": true, "notifications": { "grades": true } }` |
+| `DELETE /me/devices/{token}` | — (token raw in the path, `:` included) | `{ "registered": false }` |
+| `GET /me/notifications` | — | `{ "grades": true, "devices": 1 }` |
+| `PUT /me/notifications` | `{ "grades": false }` | `{ "grades": false, "devices": 1 }` |
+
+- A token belongs to one account (`devices`, unique): registering it again
+  refreshes `last_seen`, and a phone that logs in with another account moves
+  it. Grade notifications start **on** with the first device.
+  `POST /auth/logout` removes every device of the user. Tokens FCM reports as
+  `UNREGISTERED` or `INVALID_ARGUMENT` are dropped.
+- Message (`Nexo.Notifications.Push.grade/2`), one per student and save:
+
+  ```json
+  { "notification": { "title": "Nueva nota · Base de Datos I", "body": "Unidad 1 · Evidencia de Conocimiento: 12" },
+    "data": { "type": "grade", "term": "2026-2", "course": "341119" },
+    "android": { "priority": "HIGH", "notification": { "channel_id": "grades", "tag": "grade-341119" } } }
+  ```
+
+- Sent in a background task after the save (`Nexo.Notifications.GradeAlerts`),
+  so the teacher never waits for FCM. Grades and tokens are never logged.
+- Config: `FCM_SERVICE_ACCOUNT_JSON` (whole JSON) or `FCM_SERVICE_ACCOUNT_FILE`;
+  without either, pushes stay off.

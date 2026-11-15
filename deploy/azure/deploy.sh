@@ -165,6 +165,18 @@ deploy() {
     secrets+=("system-admins=$SYSTEM_ADMINS")
     env_vars+=("SYSTEM_ADMINS=secretref:system-admins")
   fi
+  # Push notifications (FCM HTTP v1): the service account JSON, compacted to
+  # one line, becomes a secret. Never printed; without the file pushes stay off.
+  local fcm_file="${FCM_SERVICE_ACCOUNT_FILE:-deploy/azure/firebase-service-account.json}"
+  if [[ -f "$fcm_file" ]]; then
+    local fcm_json
+    fcm_json="$(python -c 'import json, sys; print(json.dumps(json.load(open(sys.argv[1])), separators=(",", ":")))' "$fcm_file")" ||
+      fail "$fcm_file is not valid JSON."
+    secrets+=("fcm-service-account=$fcm_json")
+    env_vars+=("FCM_SERVICE_ACCOUNT_JSON=secretref:fcm-service-account")
+  else
+    say "No $fcm_file: push notifications stay disabled"
+  fi
 
   if app_exists; then
     say "Updating $APP"

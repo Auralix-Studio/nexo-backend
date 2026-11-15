@@ -57,6 +57,11 @@ config :nexo, :trusted_proxies, ["127.0.0.1", "::1"]
 # Sample students until the university's endpoint exists.
 config :nexo, :directory_source, Nexo.Academic.Directory.SampleSource
 
+# Push notifications through FCM HTTP v1 (see `Nexo.Notifications.Fcm`). The
+# service account comes from the environment in `runtime.exs`; without it
+# pushes stay off.
+config :nexo, :fcm_client, Nexo.Notifications.Fcm.Http
+
 # Hosts the API answers; empty means any (see `Nexo.Web.HostGuard`).
 config :nexo, :allowed_hosts, []
 

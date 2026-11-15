@@ -20,6 +20,7 @@ defmodule Nexo.Application do
 
     # See https://elixir.hexdocs.pm/Supervisor.html
     # for other strategies and supported options
+    children = Enum.reject(children, &is_nil/1)
     opts = [strategy: :one_for_one, name: Nexo.Supervisor]
     result = Supervisor.start_link(children, opts)
     # Fails the boot on colliding API routes instead of serving a wrong table.

@@ -22,6 +22,25 @@ end
 
 config :nexo, Nexo.Web.Endpoint, http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+# FCM service account for push notifications: the whole JSON in
+# FCM_SERVICE_ACCOUNT_JSON (a Container Apps secret) or a path in
+# FCM_SERVICE_ACCOUNT_FILE. Absent: pushes are disabled.
+if config_env() != :test do
+  fcm_json =
+    case {System.get_env("FCM_SERVICE_ACCOUNT_JSON"), System.get_env("FCM_SERVICE_ACCOUNT_FILE")} do
+      {json, _} when is_binary(json) and json != "" ->
+        json
+
+      {_, path} when is_binary(path) and path != "" ->
+        if File.exists?(path), do: File.read!(path)
+
+      _ ->
+        nil
+    end
+
+  config :nexo, :fcm_service_account_json, fcm_json
+end
+
 if config_env() == :prod do
   # Only the official app may call the API. `enforce` unless told otherwise;
   # without a project number every attested request is refused.

@@ -53,6 +53,7 @@ the current commit and updates the app in place.
 | `MONGODB_URI`, `SECRET_KEY_BASE`, `ADMIN_API_KEY` | `.env.production`, stored as secrets | Required |
 | `AUTHORIZED_TEACHERS`, `SYSTEM_ADMINS` | `.env.production`, stored as secrets | Personal data |
 | `APP_CHECK_MODE`, `FIREBASE_PROJECT_NUMBER`, `FIREBASE_APP_IDS` | `.env.production` | Only the official app may call the API |
+| `FCM_SERVICE_ACCOUNT_JSON` | script, from `deploy/azure/firebase-service-account.json` (gitignored) if present, stored as a secret | Push notifications when a teacher saves grades; off without it |
 | `PHX_HOST` | script (`api.nexo.aurx.pro`) | Public host |
 | `ALLOWED_HOSTS` | `domain` step | Any other `Host` gets `421` |
 | `TRUSTED_PROXIES` | script (private ranges) | Where the real client IP may be read from |

@@ -199,6 +199,9 @@ defmodule Nexo.Teaching.Gradebook do
         end)
 
       with {:ok, summary} <- result do
+        {changed, summary} = Map.pop(summary, :changed)
+        Nexo.Notifications.GradeAlerts.saved(section, changed)
+
         audit(subject, :section_grades_written, section, %{
           unit: params.unit_id,
           type: params.type_id,
@@ -239,8 +242,16 @@ defmodule Nexo.Teaching.Gradebook do
 
     {saved_ins, failed_ins} = send(post, "/Docente/InsertarNotas", inserts)
     {saved_upd, failed_upd} = send(post, "/Docente/UpdateNota", updates)
+    not_saved = MapSet.new(failed_ins ++ failed_upd, & &1.student)
 
     %{
+      # For the students' notifications only; removed before replying.
+      changed:
+        for(
+          {code, row} <- inserts ++ updates,
+          not MapSet.member?(not_saved, code),
+          do: %{student: code, value: row["nota"], unit: unit.name, type: type.name}
+        ),
       saved: saved_ins + saved_upd,
       unchanged: unchanged,
       failed:
