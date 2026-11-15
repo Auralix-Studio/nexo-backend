@@ -37,8 +37,8 @@ defmodule Nexo.Web.Api.LegalTest do
       data = anon |> get("/legal") |> json_response(200) |> Map.fetch!("data")
 
       assert data["version"] == Legal.version()
-      assert data["version"] == 5
-      assert data["updated_at"] == "2026-11-14"
+      assert data["version"] == 6
+      assert data["updated_at"] == "2026-11-15"
       assert [_ | _] = data["summary"]
       assert Enum.all?(data["summary"], &is_binary/1)
 
@@ -52,7 +52,7 @@ defmodule Nexo.Web.Api.LegalTest do
   end
 
   describe "HTML pages" do
-    test "serve the v5 texts", %{anon: anon} do
+    test "serve the current texts", %{anon: anon} do
       for {path, title} <- [
             {"/terminos", "Términos y Condiciones"},
             {"/privacidad", "Política de Privacidad"},
@@ -64,8 +64,8 @@ defmodule Nexo.Web.Api.LegalTest do
         assert [type] = get_resp_header(conn, "content-type")
         assert type =~ "text/html"
         assert conn.resp_body =~ title
-        assert conn.resp_body =~ "Versión 5"
-        assert conn.resp_body =~ "14/11/2026"
+        assert conn.resp_body =~ "Versión 6"
+        assert conn.resp_body =~ "15/11/2026"
         assert conn.resp_body =~ "alessandrovillogas@outlook.es"
         refute conn.resp_body =~ "**"
       end
@@ -88,9 +88,9 @@ defmodule Nexo.Web.Api.LegalTest do
   describe "POST /me/legal/accept" do
     test "records the acceptance with a timestamp and audits it",
          %{student: student, student_id: id} do
-      body = student |> post("/me/legal/accept", %{version: 5}) |> json_response(200)
+      body = student |> post("/me/legal/accept", %{version: 6}) |> json_response(200)
 
-      assert body["data"]["version"] == 5
+      assert body["data"]["version"] == 6
       assert body["data"]["current"] == true
       assert {:ok, _, _} = DateTime.from_iso8601(body["data"]["accepted_at"])
 
@@ -100,20 +100,20 @@ defmodule Nexo.Web.Api.LegalTest do
                |> Enum.to_list()
 
       assert record["subject_type"] == "student"
-      assert record["version"] == 5
+      assert record["version"] == 6
       assert %DateTime{} = record["accepted_at"]
 
       assert Mongo.find_one(Db.conn(), "audit_log", %{action: "legal_accepted", actor_id: id})
-      assert Legal.accepted_version(%{type: :student, id: id}) == 5
+      assert Legal.accepted_version(%{type: :student, id: id}) == 6
     end
 
     test "keeps every acceptance as evidence", %{student: student, student_id: id} do
       student |> post("/me/legal/accept", %{version: 4}) |> json_response(200)
-      body = student |> post("/me/legal/accept", %{version: 5}) |> json_response(200)
+      body = student |> post("/me/legal/accept", %{version: 6}) |> json_response(200)
       assert body["data"]["current"]
 
       assert Mongo.count_documents(Db.conn(), Legal.collection(), %{subject_id: id}) == {:ok, 2}
-      assert Legal.accepted_version(%{type: :student, id: id}) == 5
+      assert Legal.accepted_version(%{type: :student, id: id}) == 6
     end
 
     test "teachers can accept too", %{anon: anon} do
@@ -129,10 +129,10 @@ defmodule Nexo.Web.Api.LegalTest do
 
       anon
       |> put_req_header("authorization", "Bearer " <> token)
-      |> post("/me/legal/accept", %{version: 5})
+      |> post("/me/legal/accept", %{version: 6})
       |> json_response(200)
 
-      assert Legal.accepted_version(%{type: :teacher, id: id}) == 5
+      assert Legal.accepted_version(%{type: :teacher, id: id}) == 6
     end
 
     test "rejects unknown versions and bad params", %{student: student} do
@@ -149,7 +149,7 @@ defmodule Nexo.Web.Api.LegalTest do
     end
 
     test "needs a session", %{anon: anon} do
-      assert json_response(post(anon, "/me/legal/accept", %{version: 5}), 401)
+      assert json_response(post(anon, "/me/legal/accept", %{version: 6}), 401)
     end
   end
 end

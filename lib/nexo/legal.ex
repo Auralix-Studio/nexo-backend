@@ -19,13 +19,13 @@ defmodule Nexo.Legal do
   alias Nexo.Infra.Db
   alias Nexo.Security.Audit
 
-  @version 5
-  @updated_at ~D[2026-11-14]
+  @version 6
+  @updated_at ~D[2026-11-15]
   @summary [
-    "La app ahora se comunica solo con la API de Nexo (api.nexo.aurx.pro), alojada en Microsoft Azure (Chile Central) con MongoDB Atlas como base de datos; es la API la que inicia sesión en SIGMA, la Intranet y el Centro de Idiomas en tu nombre.",
-    "Tu contraseña nunca se guarda en el servidor: se usa una vez para iniciar sesión. Las sesiones de la universidad se guardan cifradas (AES-256-GCM) y se borran al cerrar sesión.",
-    "Detallamos qué datos se tratan (identidad, notas, horario, pagos, Wi-Fi, módulo docente) y las funciones opcionales: directorio, apoderados, calendario, «Conectar con Nexo» y avisos de notas.",
-    "Explicamos las medidas de seguridad (TLS, límites de peticiones, registro de auditoría, App Check) y el flujo transfronterizo hacia los proveedores en la nube."
+    "Los avisos de notas ya están disponibles: cuando un docente registra tu nota en Nexo, recibes una notificación con el curso, la evaluación y la nota. Son opcionales (Ajustes → «Notificaciones de notas»).",
+    "El servidor no revisa tus notas periódicamente ni inicia sesión por ti para buscarlas; guarda solo el identificador de notificaciones de tu dispositivo hasta que cierres sesión.",
+    "Firebase Cloud Messaging (Google) se suma como encargado para entregar los avisos.",
+    "Tu información se mantiene temporalmente en la memoria del servidor (como máximo un día) para responder más rápido y no sobrecargar a la UPLA; se borra al cerrar sesión."
   ]
 
   @documents [
