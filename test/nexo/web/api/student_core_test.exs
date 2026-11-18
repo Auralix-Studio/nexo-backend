@@ -122,6 +122,33 @@ defmodule Nexo.Web.Api.StudentCoreTest do
       assert newest.id == "2026-1" and newest.active
     end
 
+    test "a lagging SIGMA flag does not hide the new enrollment" do
+      # SIGMA still flags 2026-1 and does not list 2026-2 yet; the Intranet
+      # already lists the 2026-2 enrollment.
+      terms =
+        Terms.merge(
+          [%{year: 2026, number: 1, active: true}, %{year: 2025, number: 2, active: false}],
+          [
+            %{year: 2025, number: 2, active: false},
+            %{year: 2026, number: 1, active: false},
+            %{year: 2026, number: 2, active: false}
+          ]
+        )
+
+      assert Enum.map(terms, &{&1.id, &1.active}) ==
+               [{"2026-2", true}, {"2026-1", false}, {"2025-2", false}]
+    end
+
+    test "SIGMA's flag wins when it is the newest" do
+      terms =
+        Terms.merge(
+          [%{year: 2026, number: 2, active: true}],
+          [%{year: 2026, number: 1, active: false}]
+        )
+
+      assert Enum.map(terms, &{&1.id, &1.active}) == [{"2026-2", true}, {"2026-1", false}]
+    end
+
     test "an expired university session asks the app to log in again", %{conn: conn} do
       {conn, _} = session(conn)
       subject = subject_of("E001")

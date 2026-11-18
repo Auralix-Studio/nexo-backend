@@ -7,6 +7,7 @@ defmodule Nexo.Academic.Terms do
   row). Labels differ too (`"2026 - 1"`, `"2025 - II"`). The result is one
   list, newest first, with ids like `"2026-1"` and labels like `"2026-I"`.
   """
+  require Logger
   alias Nexo.Infra.Cache
   alias Nexo.Upstream.{Normalize, Sessions}
 
@@ -35,6 +36,10 @@ defmodule Nexo.Academic.Terms do
   defp fetch(subject) do
     sigma = from_sigma(subject)
     intranet = from_intranet(subject)
+
+    # Term ids only (no personal data): shows which source said what when
+    # the active term looks wrong.
+    Logger.info("terms sigma=#{describe(sigma)} intranet=#{describe(intranet)}")
 
     case {sigma, intranet} do
       {{:error, :reauth_required}, {:error, :reauth_required}} ->
@@ -89,6 +94,14 @@ defmodule Nexo.Academic.Terms do
     end
   end
 
+  defp describe({:ok, rows}) do
+    rows
+    |> Enum.map(&"#{&1.year}-#{&1.number}#{if &1.active, do: "*", else: ""}")
+    |> Enum.join(",")
+  end
+
+  defp describe({:error, reason}), do: "error:#{reason}"
+
   defp rows({:ok, rows}), do: rows
   defp rows(_), do: []
 
@@ -105,16 +118,27 @@ defmodule Nexo.Academic.Terms do
       |> Map.values()
       |> Enum.sort_by(&{&1.year, &1.number}, :desc)
 
-    # Only SIGMA knows the active term; without it, the newest one is.
-    sorted =
-      if Enum.any?(sorted, & &1.active) do
-        sorted
-      else
-        case sorted do
-          [newest | rest] -> [%{newest | active: true} | rest]
-          [] -> []
-        end
+    # The active term is the newest one the student is enrolled in. SIGMA's
+    # per-student list can lag behind (it may still flag last term as active
+    # while the Intranet already lists the new enrollment), so its flag only
+    # wins when it is not older than the Intranet's newest term.
+    newest_enrolled = intranet_rows |> Enum.map(&{&1.year, &1.number}) |> Enum.max(fn -> nil end)
+
+    sigma_active =
+      sorted
+      |> Enum.filter(& &1.active)
+      |> Enum.map(&{&1.year, &1.number})
+      |> Enum.max(fn -> nil end)
+
+    active =
+      case {sigma_active, newest_enrolled} do
+        {nil, nil} -> sorted |> List.first() |> then(&(&1 && {&1.year, &1.number}))
+        {nil, enrolled} -> enrolled
+        {flagged, nil} -> flagged
+        {flagged, enrolled} -> max(flagged, enrolled)
       end
+
+    sorted = Enum.map(sorted, &%{&1 | active: {&1.year, &1.number} == active})
 
     Enum.map(sorted, fn row ->
       {id, label} = Normalize.term(row.year, row.number)

@@ -54,3 +54,6 @@ config :nexo, :rate_limits,
 # Tests change the mocked sessions between requests: university data is not
 # cached unless a test turns it on (see `Nexo.CacheTest`).
 config :nexo, :upstream_cache, false
+
+# Background warm-up of per-term averages would race with cache tests.
+config :nexo, :warm_term_averages, false

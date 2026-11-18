@@ -86,6 +86,9 @@ defmodule Nexo.Upstream.Login do
 
     with :ok <- open_sessions(subject, sessions) do
       audit(:student, student["code"], meta)
+      # Per-term averages are slow to rebuild; start now so the grades
+      # screen has them when the student opens it.
+      Nexo.Academic.Grades.warm_term_averages(subject)
 
       {:ok,
        session(subject, %{

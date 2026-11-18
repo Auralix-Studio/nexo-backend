@@ -205,9 +205,11 @@ defmodule Nexo.Academic.Profile do
       study_plan:
         Normalize.text(info["pes_Id"]) || Normalize.text(at.(header, 8)) ||
           Normalize.text(at.(datos, 4)),
+      # The active term's enrollment says the cycle the student is in now;
+      # SIGMA's `nivel` can still be last term's.
       current_cycle:
-        Normalize.int(info["nivel"]) || Normalize.int(at.(header, 18)) ||
-          Normalize.int(at.(header, 9)),
+        Normalize.int(at.(header, 18)) || Normalize.int(at.(header, 9)) ||
+          Normalize.int(info["nivel"]),
       enrolled:
         Normalize.bool(info["matriculado"]) or enrolled_courses != [] or
           (active != nil and last_enrollment == "#{active.year}-#{active.number}"),

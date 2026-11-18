@@ -23,6 +23,9 @@ IMAGE="nexo-backend"
 ENV_FILE="${ENV_FILE:-deploy/azure/.env.production}"
 MIN_REPLICAS="${MIN_REPLICAS:-0}"
 MAX_REPLICAS="${MAX_REPLICAS:-2}"
+# Seconds without traffic before scaling to zero. Waking up takes ~10-30 s,
+# so a longer cooldown keeps the app responsive between uses for little cost.
+COOLDOWN="${COOLDOWN:-1800}"
 # The Container Apps ingress reaches the app from private address ranges.
 TRUSTED_PROXIES="${TRUSTED_PROXIES:-10.0.0.0/8,100.64.0.0/10,172.16.0.0/12,192.168.0.0/16}"
 
@@ -206,6 +209,8 @@ deploy() {
       --secrets "${secrets[@]}" \
       --env-vars "${env_vars[@]}" -o none
   fi
+
+  az resource update --ids "$(az containerapp show -g "$RG" -n "$APP" --query id -o tsv)"     --set properties.template.scale.cooldownPeriod="$COOLDOWN" -o none
 
   status
   cat <<EOF

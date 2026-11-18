@@ -688,51 +688,85 @@ defmodule Nexo.Academic.Grades do
   # past term's own grades give its credit-weighted average. Cached per
   # student, `:empty` too (shorter), so an account without them does not
   # recompute every past term on each call.
+  # SIGMA's per-term averages come back empty for some accounts; then each
+  # past term's own grades give its average. That is one university read per
+  # term (up to 14), too slow for a request's time budget, so it runs in the
+  # background (started at login and on the first summary that misses it)
+  # and the summary returns whatever is already computed.
   defp computed_term_averages(subject) do
-    result =
-      Cache.subject(
-        subject,
-        :computed_term_averages,
-        fn ->
-          case Terms.list(subject) do
-            {:ok, terms, _} ->
-              terms
-              |> Enum.reject(& &1.active)
-              |> Enum.take(14)
-              |> Task.async_stream(
-                fn t ->
-                  case term(subject, t.id) do
-                    {:ok, %{average: %{value: v}}, _} when is_number(v) ->
-                      %{term: t.id, average: v}
+    case Cache.peek_subject(subject, :computed_term_averages) do
+      {:ok, {:ok, rows}} ->
+        rows
 
-                    _ ->
-                      nil
-                  end
-                end,
-                max_concurrency: 3,
-                timeout: 40_000,
-                on_timeout: :kill_task
-              )
-              |> Enum.flat_map(fn
-                {:ok, %{} = row} -> [row]
-                _ -> []
-              end)
-              |> case do
-                [] -> :empty
-                rows -> {:ok, rows}
-              end
+      {:ok, _empty} ->
+        []
 
-            _ ->
-              :failed
-          end
-        end,
+      :miss ->
+        warm_term_averages(subject)
+        []
+    end
+  end
+
+  @doc """
+  Computes the per-term averages of `subject` in a background process (no
+  request deadline) and caches them. Safe to call often: one computation per
+  student at a time.
+  """
+  def warm_term_averages(subject) do
+    if Application.get_env(:nexo, :warm_term_averages, true), do: spawn_warm(subject)
+    :ok
+  end
+
+  defp spawn_warm(subject) do
+    # `spawn`, not Task: a Task would inherit the caller's request deadline.
+    spawn(fn ->
+      Cache.subject(subject, :computed_term_averages, fn -> compute_term_averages(subject) end,
         ttl: &if(&1 == :empty, do: @empty_averages_ttl, else: @averages_ttl),
         cache_if: &(&1 != :failed)
       )
+    end)
+  end
 
-    case result do
-      {:ok, rows} -> rows
-      _ -> []
+  defp compute_term_averages(subject) do
+    case Terms.list(subject) do
+      {:ok, terms, _} ->
+        results =
+          terms
+          |> Enum.reject(& &1.active)
+          |> Enum.take(14)
+          |> Task.async_stream(
+            fn t ->
+              case term(subject, t.id) do
+                {:ok, %{average: %{value: v}}, _} when is_number(v) ->
+                  {:row, %{term: t.id, average: v}}
+
+                {:ok, _, _} ->
+                  :no_average
+
+                _ ->
+                  :failed
+              end
+            end,
+            max_concurrency: 2,
+            timeout: 60_000,
+            on_timeout: :kill_task
+          )
+          |> Enum.map(fn
+            {:ok, result} -> result
+            _ -> :failed
+          end)
+
+        rows = for {:row, row} <- results, do: row
+
+        cond do
+          rows != [] -> {:ok, rows}
+          # Only "nothing to show" when every term answered.
+          Enum.any?(results, &(&1 == :failed)) -> :failed
+          true -> :empty
+        end
+
+      _ ->
+        :failed
     end
   end
 
