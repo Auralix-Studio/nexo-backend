@@ -212,7 +212,7 @@ deploy() {
 
   # No CLI flag for the cooldown; MSYS_NO_PATHCONV keeps Git Bash from
   # rewriting the /subscriptions/... id.
-  MSYS_NO_PATHCONV=1 python deploy/azure/set_cooldown.py 
+  MSYS_NO_PATHCONV=1 python deploy/azure/set_cooldown.py \
     "$(az containerapp show -g "$RG" -n "$APP" --query id -o tsv)" "$COOLDOWN"
 
   status
