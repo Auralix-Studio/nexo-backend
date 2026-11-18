@@ -210,7 +210,10 @@ deploy() {
       --env-vars "${env_vars[@]}" -o none
   fi
 
-  az resource update --ids "$(az containerapp show -g "$RG" -n "$APP" --query id -o tsv)"     --set properties.template.scale.cooldownPeriod="$COOLDOWN" -o none
+  # No CLI flag for the cooldown; MSYS_NO_PATHCONV keeps Git Bash from
+  # rewriting the /subscriptions/... id.
+  MSYS_NO_PATHCONV=1 python deploy/azure/set_cooldown.py 
+    "$(az containerapp show -g "$RG" -n "$APP" --query id -o tsv)" "$COOLDOWN"
 
   status
   cat <<EOF
